@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext is permitted here because Android cannot scope it to private IP ranges.
+  LanOnlyCleartextInterceptor enforces the real rule: plain HTTP only to private
+  addresses and .local hosts, unless a profile explicitly allows insecure connections.
+  User-installed CAs are trusted so a home server with its own certificate works.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
