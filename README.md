@@ -2,8 +2,7 @@
 
 A personal Android chat client for any model endpoint. Each **profile** is a base URL, an API key and an API format: Anthropic, OpenAI, Nebius and similar platforms, or Ollama and LM Studio on your own network. Pick a profile, then one of its models, and chat.
 
-- Design doc: https://claude.ai/artifact/QXrh5dE9gocNu9ETSBfdZ6
-- UI sketches: https://claude.ai/artifact/VNjxxwUJ8YZ2irVQUCW5Wj
+Everything stays on the phone: no account, no backend, no analytics. API keys are encrypted with an Android Keystore key, and the only network traffic goes to the endpoints you add.
 
 ## Build and install
 
@@ -38,3 +37,7 @@ Plain `http://` is allowed only to private addresses (10.x, 172.16-31.x, 192.168
 | `ui/profiles/`, `ui/settings/`, `ui/personalization/` | The other screens |
 
 Anthropic requests send `anthropic-version: 2026-10-21` and replay each reply's content blocks verbatim (thinking blocks included) while a chat stays on the same profile and model. A chat's system prompt is fixed when the chat starts.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
