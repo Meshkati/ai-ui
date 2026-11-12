@@ -42,6 +42,7 @@ fun AppNavigation(container: AppContainer) {
                 onOpenSettings = { nav.navigate(Routes.SETTINGS) },
                 onAddProfile = { nav.navigate(Routes.profile(null)) },
                 onEditProfile = { nav.navigate(Routes.profile(it)) },
+                onOpenMemory = { nav.navigate(Routes.MEMORY) },
             )
         }
         composable(Routes.SETTINGS) {

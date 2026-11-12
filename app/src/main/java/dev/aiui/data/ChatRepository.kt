@@ -18,7 +18,6 @@ import dev.aiui.llm.LlmPart
 import dev.aiui.llm.LlmRequest
 import dev.aiui.llm.OpenAiCompatAdapter
 import dev.aiui.llm.ReplyStream
-import dev.aiui.llm.ToolOutput
 import dev.aiui.llm.Role
 import dev.aiui.llm.isOpenAiHost
 import kotlinx.coroutines.CancellationException
@@ -227,6 +226,7 @@ class ChatRepository(
         val assistantId = db.messages().insert(placeholder)
         var message = placeholder.copy(id = assistantId)
         var reply: ReplyStream? = null
+        var memoryUpdated = false
         setLive(assistantId, "")
         try {
             val profile = conversation.profileId?.let { profiles.get(it) }
@@ -250,14 +250,16 @@ class ChatRepository(
                 db.messages().update(message)
                 return
             }
+            val settings = prefs.current()
             val request = LlmRequest(
                 model = modelId,
-                system = if (prefs.current().memory) memory.systemPrompt(conversation.systemPrompt) else conversation.systemPrompt,
+                system = if (settings.memory) memory.systemPrompt(conversation.systemPrompt) else conversation.systemPrompt,
                 messages = buildHistory(history, conversation, endpoint.format, endpoint.baseUrl),
                 maxOutputTokens = model?.maxOutputTokens ?: AnthropicAdapter.DEFAULT_MAX_TOKENS,
+                tools = if (settings.memory && settings.memoryUpdates) MemoryRepository.tools else emptyList(),
             )
             val stream = ReplyStream(clients.getValue(endpoint.format), endpoint) { call ->
-                ToolOutput("Unknown tool ${call.name}", isError = true)
+                memory.run(call).also { if (!it.isError) memoryUpdated = true }
             }
             reply = stream
             var lastWrite = 0L
@@ -277,12 +279,18 @@ class ChatRepository(
                 stopReason = done?.stopReason,
                 inputTokens = stream.inputTokens,
                 outputTokens = stream.outputTokens,
+                memoryUpdated = memoryUpdated,
             )
             db.messages().update(message)
         } catch (e: CancellationException) {
             withContext(NonCancellable) {
                 db.messages().update(
-                    message.copy(text = reply?.text.orEmpty(), status = MessageStatus.STOPPED, outputTokens = reply?.outputTokens),
+                    message.copy(
+                        text = reply?.text.orEmpty(),
+                        status = MessageStatus.STOPPED,
+                        outputTokens = reply?.outputTokens,
+                        memoryUpdated = memoryUpdated,
+                    ),
                 )
             }
             throw e
@@ -292,6 +300,7 @@ class ChatRepository(
                     text = reply?.text.orEmpty(),
                     status = MessageStatus.ERROR,
                     error = e.message ?: e.javaClass.simpleName,
+                    memoryUpdated = memoryUpdated,
                 ),
             )
         } finally {
