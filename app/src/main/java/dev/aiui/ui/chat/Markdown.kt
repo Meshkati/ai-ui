@@ -25,12 +25,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
@@ -39,8 +41,10 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
@@ -279,52 +283,12 @@ fun MarkdownContent(
     val colors = MaterialTheme.colorScheme
     val codeBackground = colors.surfaceContainerHigh
     val inline = { text: String -> inlineMarkdown(text, codeBackground, colors.primary) }
-    val body = MaterialTheme.typography.bodyLarge
+    val replyDirection = remember(blocks) { readingDirection(blocks.joinToString("\n") { it.prose() }) }
+        ?: LocalLayoutDirection.current
     Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         blocks.forEach { block ->
             when (block) {
-                is MdBlock.Paragraph -> Text(inline(block.text), style = body)
-                is MdBlock.Heading -> Text(
-                    inline(block.text),
-                    style = when (block.level) {
-                        1 -> MaterialTheme.typography.headlineSmall
-                        2 -> MaterialTheme.typography.titleLarge
-                        else -> MaterialTheme.typography.titleMedium
-                    },
-                    modifier = Modifier.padding(top = 4.dp),
-                )
                 is MdBlock.Code -> CodeBlock(block, onCopyCode, onSaveCode)
-                is MdBlock.ListItems -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    var number = 0
-                    block.items.forEach { item ->
-                        val ordered = item.marker.first().isDigit()
-                        number = if (ordered) item.marker.dropLast(1).toIntOrNull() ?: (number + 1) else number
-                        Row(Modifier.padding(start = (item.depth * 16).dp)) {
-                            Text(
-                                if (ordered) "$number." else "•",
-                                style = body,
-                                color = colors.onSurfaceVariant,
-                                modifier = Modifier.width(if (ordered) 28.dp else 18.dp),
-                            )
-                            Text(inline(item.text), style = body)
-                        }
-                    }
-                }
-                is MdBlock.Quote -> Row(Modifier.height(IntrinsicSize.Min)) {
-                    Box(
-                        Modifier
-                            .width(3.dp)
-                            .fillMaxHeight()
-                            .background(colors.outlineVariant, RoundedCornerShape(2.dp)),
-                    )
-                    Text(
-                        inline(block.text),
-                        style = body,
-                        color = colors.onSurfaceVariant,
-                        modifier = Modifier.padding(start = 12.dp),
-                    )
-                }
-                is MdBlock.Table -> TableBlock(block, inline)
                 is MdBlock.Image -> AsyncImage(
                     model = block.url,
                     contentDescription = block.alt.ifBlank { null },
@@ -334,8 +298,80 @@ fun MarkdownContent(
                         .clip(RoundedCornerShape(12.dp)),
                 )
                 MdBlock.Rule -> HorizontalDivider(color = colors.outlineVariant)
+                else -> InReadingDirection(block.prose(), fallback = replyDirection) { textDirection ->
+                    ProseBlock(block, textDirection, inline)
+                }
             }
         }
+    }
+}
+
+/** The words a block's reading direction is judged by; code and media have none. */
+private fun MdBlock.prose(): String = when (this) {
+    is MdBlock.Heading -> text
+    is MdBlock.Paragraph -> text
+    is MdBlock.Quote -> text
+    is MdBlock.ListItems -> items.joinToString("\n") { it.text }
+    is MdBlock.Table -> (header + rows.flatten()).joinToString("\n")
+    is MdBlock.Code, is MdBlock.Image, MdBlock.Rule -> ""
+}
+
+/** Lays [content] out in the direction [prose] reads, so bullets, quote bars and table columns follow it. */
+@Composable
+private fun InReadingDirection(prose: String, fallback: LayoutDirection, content: @Composable (TextDirection) -> Unit) {
+    val direction = remember(prose) { readingDirection(prose) } ?: fallback
+    CompositionLocalProvider(LocalLayoutDirection provides direction) {
+        Box(Modifier.fillMaxWidth()) { content(direction.asTextDirection()) }
+    }
+}
+
+@Composable
+private fun ProseBlock(block: MdBlock, textDirection: TextDirection, inline: (String) -> AnnotatedString) {
+    val colors = MaterialTheme.colorScheme
+    val body = MaterialTheme.typography.bodyLarge.copy(textDirection = textDirection)
+    when (block) {
+        is MdBlock.Paragraph -> Text(inline(block.text), style = body)
+        is MdBlock.Heading -> Text(
+            inline(block.text),
+            style = when (block.level) {
+                1 -> MaterialTheme.typography.headlineSmall
+                2 -> MaterialTheme.typography.titleLarge
+                else -> MaterialTheme.typography.titleMedium
+            }.copy(textDirection = textDirection),
+            modifier = Modifier.padding(top = 4.dp),
+        )
+        is MdBlock.ListItems -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            var number = 0
+            block.items.forEach { item ->
+                val ordered = item.marker.first().isDigit()
+                number = if (ordered) item.marker.dropLast(1).toIntOrNull() ?: (number + 1) else number
+                Row(Modifier.padding(start = (item.depth * 16).dp)) {
+                    Text(
+                        if (ordered) "$number." else "•",
+                        style = body,
+                        color = colors.onSurfaceVariant,
+                        modifier = Modifier.width(if (ordered) 28.dp else 18.dp),
+                    )
+                    Text(inline(item.text), style = body)
+                }
+            }
+        }
+        is MdBlock.Quote -> Row(Modifier.height(IntrinsicSize.Min)) {
+            Box(
+                Modifier
+                    .width(3.dp)
+                    .fillMaxHeight()
+                    .background(colors.outlineVariant, RoundedCornerShape(2.dp)),
+            )
+            Text(
+                inline(block.text),
+                style = body,
+                color = colors.onSurfaceVariant,
+                modifier = Modifier.padding(start = 12.dp),
+            )
+        }
+        is MdBlock.Table -> TableBlock(block, textDirection, inline)
+        is MdBlock.Code, is MdBlock.Image, MdBlock.Rule -> Unit
     }
 }
 
@@ -369,20 +405,23 @@ private fun CodeBlock(
                     Text("Save")
                 }
             }
-            Text(
-                block.code,
-                style = CodeTextStyle,
-                softWrap = false,
-                modifier = Modifier
-                    .horizontalScroll(rememberScrollState())
-                    .padding(start = 14.dp, end = 14.dp, bottom = 12.dp),
-            )
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                Text(
+                    block.code,
+                    style = CodeTextStyle.copy(textDirection = TextDirection.Ltr),
+                    softWrap = false,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(start = 14.dp, end = 14.dp, bottom = 12.dp),
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun TableBlock(block: MdBlock.Table, inline: (String) -> AnnotatedString) {
+private fun TableBlock(block: MdBlock.Table, textDirection: TextDirection, inline: (String) -> AnnotatedString) {
     val colors = MaterialTheme.colorScheme
     Surface(
         color = Color.Transparent,
@@ -397,7 +436,7 @@ private fun TableBlock(block: MdBlock.Table, inline: (String) -> AnnotatedString
                     block.header.indices.forEach { col ->
                         Text(
                             inline(row.getOrElse(col) { "" }),
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodyMedium.copy(textDirection = textDirection),
                             fontWeight = if (rowIndex == 0) FontWeight.SemiBold else null,
                             modifier = Modifier
                                 .widthIn(min = 64.dp, max = 240.dp)

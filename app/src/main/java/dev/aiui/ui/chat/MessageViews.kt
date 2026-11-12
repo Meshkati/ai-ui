@@ -85,9 +85,10 @@ private fun UserMessage(message: UiMessage, busy: Boolean, actions: MessageActio
                         .clip(RoundedCornerShape(20.dp, 20.dp, 4.dp, 20.dp))
                         .combinedClickable(onClick = {}, onLongClick = { menu = true }, onLongClickLabel = "Message options"),
                 ) {
+                    val textDirection = remember(message.text) { textDirectionOf(message.text) }
                     Text(
                         message.text,
-                        style = MaterialTheme.typography.bodyLarge,
+                        style = MaterialTheme.typography.bodyLarge.copy(textDirection = textDirection),
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
                     )
                 }
