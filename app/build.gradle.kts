@@ -5,6 +5,10 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+// Release signing comes from the environment (CI secrets). Without it, release
+// builds are signed with the debug key so local builds still install.
+val releaseKeystore = providers.environmentVariable("RELEASE_KEYSTORE").orNull
+
 android {
     namespace = "dev.aiui"
     compileSdk = 36
@@ -13,11 +17,30 @@ android {
         applicationId = "dev.aiui"
         minSdk = 35
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        // CI sets these from the release tag: -PversionCode=... -PversionName=...
+        versionCode = providers.gradleProperty("versionCode").orNull?.toInt() ?: 1
+        versionName = providers.gradleProperty("versionName").orNull ?: "0.1.0"
+    }
+
+    signingConfigs {
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile = file(releaseKeystore)
+                storePassword = providers.environmentVariable("RELEASE_KEYSTORE_PASSWORD").orNull
+                keyAlias = providers.environmentVariable("RELEASE_KEY_ALIAS").orNull
+                // A PKCS12 keystore has one password for the store and its key.
+                keyPassword = storePassword
+            }
+        }
     }
 
     buildTypes {
+        // A separate app id lets a debug build sit next to an installed release
+        // instead of clashing with its signing key.
+        debug {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -25,8 +48,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            // Personal sideloaded app: sign release builds with the debug key until a real key exists.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
 
