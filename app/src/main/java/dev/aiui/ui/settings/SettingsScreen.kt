@@ -57,6 +57,8 @@ import dev.aiui.data.audioProfileFor
 import dev.aiui.ui.components.ModelPurpose
 import dev.aiui.ui.components.LocalBadge
 import dev.aiui.ui.components.ProfileModelPickerSheet
+import dev.aiui.ui.components.SectionDivider
+import dev.aiui.ui.components.SettingsSection
 import dev.aiui.ui.components.clickableRow
 import dev.aiui.ui.components.isLocal
 import dev.aiui.update.Updates
@@ -71,6 +73,7 @@ class SettingsViewModel(container: AppContainer) : ViewModel() {
     private val prefsRepo = container.prefs
     private val chats = container.chats
     val profiles = container.profiles.profiles.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val memories = container.memory.memories.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val prefs = prefsRepo.prefs.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppPrefs())
     private val updates = container.updates
     val installedVersion = updates.installed
@@ -108,8 +111,10 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenProfile: (Long?) -> Unit,
     onOpenPersonalization: () -> Unit,
+    onOpenMemory: () -> Unit,
 ) {
     val profiles by vm.profiles.collectAsStateWithLifecycle()
+    val memories by vm.memories.collectAsStateWithLifecycle()
     val newerVersion by vm.newerVersion.collectAsStateWithLifecycle()
     val uriHandler = LocalUriHandler.current
     val prefs by vm.prefs.collectAsStateWithLifecycle()
@@ -161,9 +166,9 @@ fun SettingsScreen(
             modifier = Modifier.fillMaxSize(),
         ) {
             item {
-                Section("Profiles") {
+                SettingsSection("Profiles") {
                     profiles.forEachIndexed { index, item ->
-                        if (index > 0) Divider()
+                        if (index > 0) SectionDivider()
                         val shown = item.enabledModels.size
                         Row_(
                             title = item.profile.name,
@@ -172,7 +177,7 @@ fun SettingsScreen(
                             onClick = { onOpenProfile(item.profile.id) },
                         )
                     }
-                    if (profiles.isNotEmpty()) Divider()
+                    if (profiles.isNotEmpty()) SectionDivider()
                     ListItem(
                         headlineContent = { Text("Add profile", color = MaterialTheme.colorScheme.primary) },
                         leadingContent = { Icon(Icons.Outlined.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
@@ -182,21 +187,23 @@ fun SettingsScreen(
                 }
             }
             item {
-                Section("Defaults") {
+                SettingsSection("Defaults") {
                     Row_("Default profile and model", defaultLabel, onClick = { showPicker = true })
-                    Divider()
+                    SectionDivider()
                     Row_("Personalization", "Your name and the system prompt for new chats", onClick = onOpenPersonalization)
+                    SectionDivider()
+                    Row_("Memory", memoryLabel(prefs.memory, memories.size), onClick = onOpenMemory)
                 }
             }
             item {
-                Section("Voice") {
+                SettingsSection("Voice") {
                     Row_("Speech to text", voiceLabel(prefs.speechToText), onClick = { voicePicker = ModelPurpose.SPEECH_TO_TEXT })
-                    Divider()
+                    SectionDivider()
                     Row_("Text to speech", voiceLabel(prefs.textToSpeech), onClick = { voicePicker = ModelPurpose.TEXT_TO_SPEECH })
                 }
             }
             item {
-                Section("Appearance") {
+                SettingsSection("Appearance") {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text("Theme", style = MaterialTheme.typography.bodyLarge)
                         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
@@ -211,7 +218,7 @@ fun SettingsScreen(
                             }
                         }
                     }
-                    Divider()
+                    SectionDivider()
                     ListItem(
                         headlineContent = { Text("Use wallpaper colours") },
                         supportingContent = { Text("Material You dynamic colour") },
@@ -221,13 +228,13 @@ fun SettingsScreen(
                 }
             }
             item {
-                Section("Data") {
+                SettingsSection("Data") {
                     Row_(
                         "Export chats",
                         "JSON file. API keys are never included.",
                         onClick = { exportLauncher.launch("ai-ui-chats-${LocalDate.now()}.json") },
                     )
-                    Divider()
+                    SectionDivider()
                     ListItem(
                         headlineContent = { Text("Delete all chats", color = MaterialTheme.colorScheme.error) },
                         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
@@ -236,7 +243,7 @@ fun SettingsScreen(
                 }
             }
             item {
-                Section("About") {
+                SettingsSection("About") {
                     val newer = newerVersion
                     if (newer != null) {
                         Row_(
@@ -251,7 +258,7 @@ fun SettingsScreen(
                             onClick = vm::checkForUpdate,
                         )
                     }
-                    Divider()
+                    SectionDivider()
                     Row_(
                         "Source code",
                         Updates.SOURCE_URL.removePrefix("https://"),
@@ -312,6 +319,12 @@ fun SettingsScreen(
     }
 }
 
+private fun memoryLabel(on: Boolean, saved: Int): String = when {
+    !on -> "Off"
+    saved == 0 -> "On, nothing saved yet"
+    else -> "On, $saved saved"
+}
+
 private fun updateStatus(installed: String, checking: Boolean, found: Updates.Found?): String = when {
     checking -> "Checking GitHub…"
     found == Updates.Found.UpToDate -> "Version $installed is the latest"
@@ -319,24 +332,6 @@ private fun updateStatus(installed: String, checking: Boolean, found: Updates.Fo
     found is Updates.Found.NotARelease -> "This build doesn't update. The latest is ${found.latest}."
     else -> "Version $installed"
 }
-
-@Composable
-private fun Section(title: String, content: @Composable () -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(
-            title,
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(start = 8.dp),
-        )
-        Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(16.dp)) {
-            Column { content() }
-        }
-    }
-}
-
-@Composable
-private fun Divider() = HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, modifier = Modifier.padding(horizontal = 16.dp))
 
 @Composable
 private fun Row_(title: String, subtitle: String, badge: Boolean = false, onClick: () -> Unit) {

@@ -17,15 +17,14 @@ import dev.aiui.llm.LlmMessage
 import dev.aiui.llm.LlmPart
 import dev.aiui.llm.LlmRequest
 import dev.aiui.llm.OpenAiCompatAdapter
+import dev.aiui.llm.ReplyStream
 import dev.aiui.llm.Role
-import dev.aiui.llm.StreamEvent
 import dev.aiui.llm.isOpenAiHost
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -52,6 +51,7 @@ class ChatRepository(
     private val profiles: ProfileRepository,
     private val prefs: PrefsRepository,
     private val attachments: AttachmentStore,
+    private val memory: MemoryRepository,
     private val clients: Map<ApiFormat, LlmClient>,
     private val images: OpenAiCompatAdapter,
     private val scope: CoroutineScope,
@@ -225,9 +225,8 @@ class ChatRepository(
         )
         val assistantId = db.messages().insert(placeholder)
         var message = placeholder.copy(id = assistantId)
-        val text = StringBuilder()
-        var inputTokens: Int? = null
-        var outputTokens: Int? = null
+        var reply: ReplyStream? = null
+        var memoryUpdated = false
         setLive(assistantId, "")
         try {
             val profile = conversation.profileId?.let { profiles.get(it) }
@@ -251,75 +250,57 @@ class ChatRepository(
                 db.messages().update(message)
                 return
             }
-            val client = clients.getValue(endpoint.format)
-            var request = LlmRequest(
+            val settings = prefs.current()
+            val request = LlmRequest(
                 model = modelId,
-                system = conversation.systemPrompt,
+                system = if (settings.memory) memory.systemPrompt(conversation.systemPrompt) else conversation.systemPrompt,
                 messages = buildHistory(history, conversation, endpoint.format, endpoint.baseUrl),
                 maxOutputTokens = model?.maxOutputTokens ?: AnthropicAdapter.DEFAULT_MAX_TOKENS,
+                tools = if (settings.memory && settings.memoryUpdates) MemoryRepository.tools else emptyList(),
             )
-            var attempt = 0
-            var strippedRawBlocks = false
-            var done: StreamEvent.Done? = null
+            val stream = ReplyStream(clients.getValue(endpoint.format), endpoint) { call ->
+                memory.run(call).also { if (!it.isError) memoryUpdated = true }
+            }
+            reply = stream
             var lastWrite = 0L
-            while (true) {
-                try {
-                    client.stream(endpoint, request).collect { event ->
-                        when (event) {
-                            is StreamEvent.TextDelta -> {
-                                text.append(event.text)
-                                setLive(assistantId, text.toString())
-                                val now = System.currentTimeMillis()
-                                if (now - lastWrite > WRITE_INTERVAL_MS) {
-                                    lastWrite = now
-                                    db.messages().updateText(assistantId, text.toString())
-                                }
-                            }
-                            is StreamEvent.Usage -> {
-                                event.inputTokens?.let { inputTokens = it }
-                                event.outputTokens?.let { outputTokens = it }
-                            }
-                            is StreamEvent.Done -> done = event
-                        }
-                    }
-                    break
-                } catch (e: LlmException) {
-                    if (text.isNotEmpty()) throw e
-                    if (!strippedRawBlocks && endpoint.format == ApiFormat.ANTHROPIC && e.isThinkingSignatureError) {
-                        strippedRawBlocks = true
-                        request = request.withoutRawBlocks()
-                        continue
-                    }
-                    if (e.kind.retryable && attempt < MAX_RETRIES) {
-                        attempt++
-                        delay(((e.retryAfterSeconds ?: (attempt * 2L - 1)) * 1000).coerceAtMost(30_000))
-                        continue
-                    }
-                    throw e
+            val done = stream.run(request) { text ->
+                setLive(assistantId, text)
+                val now = System.currentTimeMillis()
+                if (now - lastWrite > WRITE_INTERVAL_MS) {
+                    lastWrite = now
+                    db.messages().updateText(assistantId, text)
                 }
             }
             message = message.copy(
-                text = text.toString(),
-                rawBlocks = done?.rawBlocks?.takeIf { it.isNotEmpty() }?.toString(),
+                text = stream.text,
+                // Tool rounds are not stored, so raw blocks that answer them could not be replayed.
+                rawBlocks = done?.rawBlocks?.takeIf { it.isNotEmpty() && !stream.usedTools }?.toString(),
                 status = MessageStatus.COMPLETE,
                 stopReason = done?.stopReason,
-                inputTokens = inputTokens,
-                outputTokens = outputTokens,
+                inputTokens = stream.inputTokens,
+                outputTokens = stream.outputTokens,
+                memoryUpdated = memoryUpdated,
             )
             db.messages().update(message)
         } catch (e: CancellationException) {
             withContext(NonCancellable) {
                 db.messages().update(
-                    message.copy(text = text.toString(), status = MessageStatus.STOPPED, outputTokens = outputTokens),
+                    message.copy(
+                        text = reply?.text.orEmpty(),
+                        status = MessageStatus.STOPPED,
+                        outputTokens = reply?.outputTokens,
+                        memoryUpdated = memoryUpdated,
+                    ),
                 )
             }
             throw e
         } catch (e: Throwable) {
             db.messages().update(
                 message.copy(
-                    text = text.toString(),
+                    text = reply?.text.orEmpty(),
                     status = MessageStatus.ERROR,
                     error = e.message ?: e.javaClass.simpleName,
+                    memoryUpdated = memoryUpdated,
                 ),
             )
         } finally {
@@ -393,7 +374,6 @@ class ChatRepository(
 
     companion object {
         const val DEFAULT_TITLE = "New chat"
-        private const val MAX_RETRIES = 2
         private const val WRITE_INTERVAL_MS = 500L
         private val PrettyJson = Json { prettyPrint = true }
 

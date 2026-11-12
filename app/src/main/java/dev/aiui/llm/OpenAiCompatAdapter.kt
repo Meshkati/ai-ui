@@ -1,10 +1,11 @@
 package dev.aiui.llm
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.add
 import kotlinx.serialization.json.addJsonObject
-import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
@@ -32,12 +33,13 @@ class OpenAiCompatAdapter(private val http: OkHttpClient) : LlmClient {
             .post(body.toString().toRequestBody(JSON))
             .build()
         var finishReason: String? = null
+        val toolCalls = StreamedToolCalls()
         return sseFlow(
             http.newCall(httpRequest),
             onEvent = { event, emit ->
                 val data = event.data.trim()
                 if (data == "[DONE]") {
-                    emit(StreamEvent.Done(finishReason, null))
+                    emit(StreamEvent.Done(finishReason, null, toolCalls.finished()))
                     return@sseFlow true
                 }
                 val json = runCatching { LenientJson.parseToJsonElement(data).jsonObject }.getOrNull()
@@ -45,9 +47,10 @@ class OpenAiCompatAdapter(private val http: OkHttpClient) : LlmClient {
                 (json["error"] as? JsonObject)?.let { error ->
                     throw LlmException(ErrorKind.SERVER, error.str("message") ?: data)
                 }
-                val choice = (json["choices"] as? kotlinx.serialization.json.JsonArray)?.firstOrNull() as? JsonObject
+                val choice = (json["choices"] as? JsonArray)?.firstOrNull() as? JsonObject
                 val delta = choice?.get("delta") as? JsonObject
                 delta?.str("content")?.takeIf { it.isNotEmpty() }?.let { emit(StreamEvent.TextDelta(it)) }
+                (delta?.get("tool_calls") as? JsonArray)?.let(toolCalls::add)
                 choice?.str("finish_reason")?.let { finishReason = it }
                 (json["usage"] as? JsonObject)?.let { usage ->
                     emit(StreamEvent.Usage(usage.int("prompt_tokens"), usage.int("completion_tokens")))
@@ -57,12 +60,42 @@ class OpenAiCompatAdapter(private val http: OkHttpClient) : LlmClient {
             onEnd = { emit ->
                 // Some servers close the stream after the last chunk without sending [DONE].
                 if (finishReason != null) {
-                    emit(StreamEvent.Done(finishReason, null))
+                    emit(StreamEvent.Done(finishReason, null, toolCalls.finished()))
                 } else {
                     throw LlmException(ErrorKind.STREAM, "The connection closed before the reply finished.")
                 }
             },
         )
+    }
+
+    /** Tool calls arrive in pieces keyed by index: the id and name first, then the arguments a few characters at a time. */
+    private class StreamedToolCalls {
+        private class Partial(var id: String? = null, var name: String? = null, val arguments: StringBuilder = StringBuilder())
+
+        private val calls = sortedMapOf<Int, Partial>()
+
+        fun add(deltas: JsonArray) {
+            deltas.forEachIndexed { position, element ->
+                val delta = element as? JsonObject ?: return@forEachIndexed
+                val call = calls.getOrPut(delta.int("index") ?: position) { Partial() }
+                delta.str("id")?.let { call.id = it }
+                val function = delta["function"] as? JsonObject ?: return@forEachIndexed
+                function.str("name")?.let { call.name = it }
+                when (val arguments = function["arguments"]) {
+                    is JsonObject -> call.arguments.append(arguments.toString())
+                    is JsonPrimitive -> arguments.contentOrNull?.let { call.arguments.append(it) }
+                    else -> Unit
+                }
+            }
+        }
+
+        fun finished(): List<ToolCall> = calls.mapNotNull { (index, call) ->
+            val name = call.name ?: return@mapNotNull null
+            val arguments = call.arguments.takeIf { it.isNotBlank() }
+                ?.let { runCatching { LenientJson.parseToJsonElement(it.toString()).jsonObject }.getOrNull() }
+                ?: JsonObject(emptyMap())
+            ToolCall(call.id ?: "call_$index", name, arguments)
+        }
     }
 
     override suspend fun listModels(endpoint: Endpoint): List<RemoteModel> {
@@ -173,6 +206,20 @@ class OpenAiCompatAdapter(private val http: OkHttpClient) : LlmClient {
         fun buildBody(request: LlmRequest, extraBody: JsonObject): JsonObject = buildJsonObject {
             put("model", request.model)
             put("stream", true)
+            if (request.tools.isNotEmpty()) {
+                putJsonArray("tools") {
+                    request.tools.forEach { tool ->
+                        addJsonObject {
+                            put("type", "function")
+                            putJsonObject("function") {
+                                put("name", tool.name)
+                                put("description", tool.description)
+                                put("parameters", tool.parameters)
+                            }
+                        }
+                    }
+                }
+            }
             putJsonArray("messages") {
                 request.system?.takeIf { it.isNotBlank() }?.let { system ->
                     addJsonObject {
@@ -180,43 +227,74 @@ class OpenAiCompatAdapter(private val http: OkHttpClient) : LlmClient {
                         put("content", system)
                     }
                 }
-                request.messages.forEach { message ->
-                    val onlyText = message.parts.all { it is LlmPart.Text }
-                    val text = message.parts.filterIsInstance<LlmPart.Text>().joinToString("\n\n") { it.text }
-                    if (onlyText && text.isBlank()) return@forEach
-                    addJsonObject {
-                        put("role", if (message.role == Role.USER) "user" else "assistant")
-                        if (onlyText || message.role == Role.ASSISTANT) {
-                            put("content", text)
-                        } else {
-                            putJsonArray("content") {
-                                message.parts.forEach { part ->
-                                    when (part) {
-                                        is LlmPart.Text -> if (part.text.isNotBlank()) addJsonObject {
-                                            put("type", "text")
-                                            put("text", part.text)
+                request.messages.forEach { message -> messagesJson(message).forEach { add(it) } }
+            }
+            extraBody.forEach { (key, value) -> put(key, value) }
+        }
+
+        /** Usually one message; tool results become one `tool` message each. */
+        private fun messagesJson(message: LlmMessage): List<JsonObject> {
+            val results = message.parts.filterIsInstance<LlmPart.ToolResult>()
+            if (results.isNotEmpty()) {
+                return results.map { result ->
+                    buildJsonObject {
+                        put("role", "tool")
+                        put("tool_call_id", result.callId)
+                        put("content", result.content)
+                    }
+                }
+            }
+            val calls = message.parts.filterIsInstance<LlmPart.ToolUse>()
+            val onlyText = message.parts.all { it is LlmPart.Text }
+            val text = message.parts.filterIsInstance<LlmPart.Text>().joinToString("\n\n") { it.text }
+            if (onlyText && text.isBlank()) return emptyList()
+            return listOf(
+                buildJsonObject {
+                    put("role", if (message.role == Role.USER) "user" else "assistant")
+                    if (onlyText || message.role == Role.ASSISTANT) {
+                        put("content", text)
+                    } else {
+                        putJsonArray("content") {
+                            message.parts.forEach { part ->
+                                when (part) {
+                                    is LlmPart.Text -> if (part.text.isNotBlank()) addJsonObject {
+                                        put("type", "text")
+                                        put("text", part.text)
+                                    }
+                                    is LlmPart.Image -> addJsonObject {
+                                        put("type", "image_url")
+                                        putJsonObject("image_url") {
+                                            put("url", "data:${part.mimeType};base64,${part.base64}")
                                         }
-                                        is LlmPart.Image -> addJsonObject {
-                                            put("type", "image_url")
-                                            putJsonObject("image_url") {
-                                                put("url", "data:${part.mimeType};base64,${part.base64}")
-                                            }
+                                    }
+                                    is LlmPart.Document -> addJsonObject {
+                                        put("type", "file")
+                                        putJsonObject("file") {
+                                            put("filename", part.fileName)
+                                            put("file_data", "data:${part.mimeType};base64,${part.base64}")
                                         }
-                                        is LlmPart.Document -> addJsonObject {
-                                            put("type", "file")
-                                            putJsonObject("file") {
-                                                put("filename", part.fileName)
-                                                put("file_data", "data:${part.mimeType};base64,${part.base64}")
-                                            }
-                                        }
+                                    }
+                                    is LlmPart.ToolUse, is LlmPart.ToolResult -> Unit
+                                }
+                            }
+                        }
+                    }
+                    if (calls.isNotEmpty()) {
+                        putJsonArray("tool_calls") {
+                            calls.forEach { use ->
+                                addJsonObject {
+                                    put("id", use.call.id)
+                                    put("type", "function")
+                                    putJsonObject("function") {
+                                        put("name", use.call.name)
+                                        put("arguments", use.call.arguments.toString())
                                     }
                                 }
                             }
                         }
                     }
-                }
-            }
-            extraBody.forEach { (key, value) -> put(key, value) }
+                },
+            )
         }
     }
 }

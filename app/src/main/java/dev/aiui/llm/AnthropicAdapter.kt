@@ -75,6 +75,7 @@ class AnthropicAdapter(private val http: OkHttpClient) : LlmClient {
             val text = StringBuilder()
             val thinking = StringBuilder()
             val signature = StringBuilder()
+            val inputJson = StringBuilder()
         }
 
         private val blocks = sortedMapOf<Int, Block>()
@@ -107,6 +108,7 @@ class AnthropicAdapter(private val http: OkHttpClient) : LlmClient {
                         }
                         "thinking_delta" -> delta.str("thinking")?.let { block.thinking.append(it) }
                         "signature_delta" -> delta.str("signature")?.let { block.signature.append(it) }
+                        "input_json_delta" -> delta.str("partial_json")?.let { block.inputJson.append(it) }
                     }
                 }
                 "message_delta" -> {
@@ -115,7 +117,7 @@ class AnthropicAdapter(private val http: OkHttpClient) : LlmClient {
                     if (usage != null) emit(StreamEvent.Usage(usage.int("input_tokens"), usage.int("output_tokens")))
                 }
                 "message_stop" -> {
-                    emit(StreamEvent.Done(stopReason, rawBlocks()))
+                    emit(StreamEvent.Done(stopReason, rawBlocks(), toolCalls()))
                     return true
                 }
                 "error" -> {
@@ -149,9 +151,26 @@ class AnthropicAdapter(private val http: OkHttpClient) : LlmClient {
                         put("signature", block.signature.toString())
                     }
                     "redacted_thinking" -> add(block.start)
+                    "tool_use" -> addJsonObject {
+                        put("type", "tool_use")
+                        put("id", block.start.str("id").orEmpty())
+                        put("name", block.start.str("name").orEmpty())
+                        put("input", block.input())
+                    }
                 }
             }
         }
+
+        fun toolCalls(): List<ToolCall> = blocks.values
+            .filter { it.start.str("type") == "tool_use" }
+            .map { ToolCall(it.start.str("id").orEmpty(), it.start.str("name").orEmpty(), it.input()) }
+
+        /** The streamed input JSON; a call with no arguments streams none. */
+        private fun Block.input(): JsonObject =
+            inputJson.takeIf { it.isNotBlank() }
+                ?.let { runCatching { LenientJson.parseToJsonElement(it.toString()).jsonObject }.getOrNull() }
+                ?: (start["input"] as? JsonObject)
+                ?: JsonObject(emptyMap())
     }
 
     companion object {
@@ -173,6 +192,17 @@ class AnthropicAdapter(private val http: OkHttpClient) : LlmClient {
             put("max_tokens", request.maxOutputTokens)
             put("stream", true)
             request.system?.takeIf { it.isNotBlank() }?.let { put("system", it) }
+            if (request.tools.isNotEmpty()) {
+                putJsonArray("tools") {
+                    request.tools.forEach { tool ->
+                        addJsonObject {
+                            put("name", tool.name)
+                            put("description", tool.description)
+                            put("input_schema", tool.parameters)
+                        }
+                    }
+                }
+            }
             putJsonArray("messages") {
                 request.messages.forEach { message -> messageJson(message)?.let { add(it) } }
             }
@@ -206,6 +236,18 @@ class AnthropicAdapter(private val http: OkHttpClient) : LlmClient {
                                     put("data", part.base64)
                                 }
                                 put("title", part.fileName)
+                            }
+                            is LlmPart.ToolUse -> addJsonObject {
+                                put("type", "tool_use")
+                                put("id", part.call.id)
+                                put("name", part.call.name)
+                                put("input", part.call.arguments)
+                            }
+                            is LlmPart.ToolResult -> addJsonObject {
+                                put("type", "tool_result")
+                                put("tool_use_id", part.callId)
+                                put("content", part.content)
+                                if (part.isError) put("is_error", true)
                             }
                         }
                     }

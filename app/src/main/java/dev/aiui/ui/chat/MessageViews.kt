@@ -59,6 +59,7 @@ class MessageActions(
     val edit: (UiMessage) -> Unit,
     val openAttachment: (AttachmentEntity) -> Unit,
     val readAloud: (UiMessage) -> Unit,
+    val openMemory: () -> Unit,
 )
 
 /** Whether replies can be read aloud, and which one is being read now. */
@@ -200,6 +201,18 @@ private fun AssistantMessage(message: UiMessage, busy: Boolean, readAloud: ReadA
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(16.dp))
                     .clickable { actions.openAttachment(image) },
+            )
+        }
+
+        if (message.memoryUpdated && !streaming) {
+            Text(
+                "Memory updated",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClickLabel = "Open memory") { actions.openMemory() }
+                    .padding(vertical = 4.dp),
             )
         }
 

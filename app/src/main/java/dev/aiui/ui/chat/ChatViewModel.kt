@@ -65,6 +65,7 @@ data class UiMessage(
     val attachments: List<AttachmentEntity>,
     val modelId: String?,
     val isLast: Boolean,
+    val memoryUpdated: Boolean = false,
 )
 
 enum class VoiceInput { IDLE, RECORDING, TRANSCRIBING }
@@ -385,6 +386,7 @@ class ChatViewModel(container: AppContainer) : ViewModel() {
                 attachments = item.attachments,
                 modelId = message.modelId,
                 isLast = index == stored.lastIndex,
+                memoryUpdated = message.memoryUpdated,
             )
         }
 

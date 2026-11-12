@@ -14,6 +14,8 @@ import androidx.navigation.navArgument
 import dev.aiui.AppContainer
 import dev.aiui.ui.chat.ChatScreen
 import dev.aiui.ui.chat.ChatViewModel
+import dev.aiui.ui.memory.MemoryScreen
+import dev.aiui.ui.memory.MemoryViewModel
 import dev.aiui.ui.personalization.PersonalizationScreen
 import dev.aiui.ui.profiles.ProfileEditScreen
 import dev.aiui.ui.profiles.ProfileEditViewModel
@@ -25,6 +27,7 @@ object Routes {
     const val CHAT = "chat"
     const val SETTINGS = "settings"
     const val PERSONALIZATION = "personalization"
+    const val MEMORY = "memory"
     const val PROFILE = "profile/{id}"
     const val NEW_PROFILE_ID = -1L
 
@@ -45,6 +48,7 @@ fun AppNavigation(container: AppContainer) {
                     onOpenSettings = { nav.navigate(Routes.SETTINGS) },
                     onAddProfile = { nav.navigate(Routes.profile(null)) },
                     onEditProfile = { nav.navigate(Routes.profile(it)) },
+                    onOpenMemory = { nav.navigate(Routes.MEMORY) },
                 )
             }
         }
@@ -55,7 +59,12 @@ fun AppNavigation(container: AppContainer) {
                 onBack = { nav.popBackStack() },
                 onOpenProfile = { nav.navigate(Routes.profile(it)) },
                 onOpenPersonalization = { nav.navigate(Routes.PERSONALIZATION) },
+                onOpenMemory = { nav.navigate(Routes.MEMORY) },
             )
+        }
+        composable(Routes.MEMORY) {
+            val vm: MemoryViewModel = viewModel(factory = viewModelFactory { initializer { MemoryViewModel(container) } })
+            MemoryScreen(vm = vm, onBack = { nav.popBackStack() })
         }
         composable(Routes.PERSONALIZATION) {
             PersonalizationScreen(prefsRepository = container.prefs, onBack = { nav.popBackStack() })

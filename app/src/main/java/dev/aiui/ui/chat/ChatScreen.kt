@@ -86,6 +86,7 @@ fun ChatScreen(
     onOpenSettings: () -> Unit,
     onAddProfile: () -> Unit,
     onEditProfile: (Long) -> Unit,
+    onOpenMemory: () -> Unit,
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val query by vm.query.collectAsStateWithLifecycle()
@@ -200,6 +201,7 @@ fun ChatScreen(
             edit = vm::startEdit,
             openAttachment = { openAttachment(context, it) },
             readAloud = vm::toggleReadAloud,
+            openMemory = onOpenMemory,
         )
     }
 
