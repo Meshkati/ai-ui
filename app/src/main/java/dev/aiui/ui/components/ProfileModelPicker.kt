@@ -46,6 +46,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.aiui.data.ProfileWithModels
+import dev.aiui.data.makesImages
+import dev.aiui.llm.ApiFormat
 import dev.aiui.llm.isLocalNetworkHost
 import dev.aiui.ui.theme.MonoFamily
 import kotlinx.coroutines.launch
@@ -198,6 +200,7 @@ private fun ModelStep(
     Column(Modifier.padding(bottom = 16.dp)) {
         StepHeader("Step 2 of 2 · ${profile.profile.name}", "Choose a model", onBack)
         val models = profile.enabledModels
+        val format = ApiFormat.fromId(profile.profile.format)
         if (models.isEmpty()) {
             Text(
                 "No models are switched on in this profile.",
@@ -214,6 +217,7 @@ private fun ModelStep(
                         Text(model.modelId, fontFamily = MonoFamily, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     },
                     supportingContent = when {
+                        model.makesImages(format) -> ({ Text("Generates images") })
                         !model.supportsAttachments -> ({ Text("Text only") })
                         model.displayName != null && model.displayName != model.modelId -> ({ Text(model.displayName) })
                         else -> null

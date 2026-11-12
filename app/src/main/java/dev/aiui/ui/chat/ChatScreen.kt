@@ -136,12 +136,13 @@ fun ChatScreen(
     }
 
     val selection = state.selection
-    val attachAllowed = selection?.supportsAttachments != false
     val guardAttach: (() -> Unit) -> Unit = { action ->
-        if (attachAllowed) {
-            action()
-        } else {
-            vm.notify("${selection?.modelId} is set as text only. Turn on attachments for it in the profile.")
+        when {
+            selection?.generatesImages == true ->
+                vm.notify("${selection.modelId} makes images from text, so it doesn't take attachments.")
+            selection?.supportsAttachments == false ->
+                vm.notify("${selection.modelId} is set as text only. Turn on attachments for it in the profile.")
+            else -> action()
         }
     }
     val openPhotos = { photoLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
@@ -297,6 +298,7 @@ fun ChatScreen(
                 Composer(
                     text = vm.composerText,
                     onTextChange = { vm.composerText = it },
+                    placeholder = if (selection?.generatesImages == true) "Describe an image" else "Message",
                     pending = vm.pending,
                     importing = vm.importing,
                     editing = vm.editingMessageId != null,

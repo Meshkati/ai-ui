@@ -16,6 +16,7 @@ import dev.aiui.llm.LlmException
 import dev.aiui.llm.LlmMessage
 import dev.aiui.llm.LlmPart
 import dev.aiui.llm.LlmRequest
+import dev.aiui.llm.OpenAiCompatAdapter
 import dev.aiui.llm.Role
 import dev.aiui.llm.StreamEvent
 import dev.aiui.llm.isOpenAiHost
@@ -52,6 +53,7 @@ class ChatRepository(
     private val prefs: PrefsRepository,
     private val attachments: AttachmentStore,
     private val clients: Map<ApiFormat, LlmClient>,
+    private val images: OpenAiCompatAdapter,
     private val scope: CoroutineScope,
 ) {
     private val jobs = ConcurrentHashMap<Long, Job>()
@@ -102,18 +104,7 @@ class ChatRepository(
             ),
         )
         if (pending.isNotEmpty()) {
-            db.attachments().insertAll(
-                pending.map {
-                    AttachmentEntity(
-                        messageId = messageId,
-                        kind = it.kind,
-                        mimeType = it.mimeType,
-                        fileName = it.fileName,
-                        localPath = it.localPath,
-                        sizeBytes = it.sizeBytes,
-                    )
-                },
-            )
+            db.attachments().insertAll(pending.map { it.toEntity(messageId) })
         }
         if (conversation.title == DEFAULT_TITLE) {
             db.conversations().rename(conversationId, titleFor(text, pending))
@@ -249,6 +240,17 @@ class ChatRepository(
             }
             val endpoint = profiles.endpointFor(profile)
             val model = profiles.model(profile.id, modelId)
+            if (model != null && model.makesImages(endpoint.format)) {
+                val prompt = history.lastOrNull { it.message.role == MessageRole.USER }?.message?.text.orEmpty()
+                if (prompt.isBlank()) {
+                    throw LlmException(dev.aiui.llm.ErrorKind.BAD_REQUEST, "$modelId makes images from text. Describe the image you want.")
+                }
+                val saved = images.generateImages(endpoint, modelId, prompt).map { attachments.saveGenerated(it) }
+                db.attachments().insertAll(saved.map { it.toEntity(assistantId) })
+                message = message.copy(status = MessageStatus.COMPLETE)
+                db.messages().update(message)
+                return
+            }
             val client = clients.getValue(endpoint.format)
             var request = LlmRequest(
                 model = modelId,

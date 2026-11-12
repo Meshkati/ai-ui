@@ -185,6 +185,18 @@ private fun AssistantMessage(message: UiMessage, busy: Boolean, actions: Message
             }
         }
 
+        message.attachments.forEach { image ->
+            AsyncImage(
+                model = File(image.localPath),
+                contentDescription = image.fileName,
+                contentScale = ContentScale.FillWidth,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .clickable { actions.openAttachment(image) },
+            )
+        }
+
         statusNote(message)?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }

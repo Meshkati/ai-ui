@@ -7,6 +7,7 @@ import dev.aiui.data.db.ModelEntity
 import dev.aiui.data.db.ProfileEntity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ResolveSelectionTest {
@@ -58,5 +59,18 @@ class ResolveSelectionTest {
 
         // then
         assertFalse(selection!!.available)
+    }
+
+    @Test
+    fun chatOnAnImageModel_isMarkedAsGeneratingImages() {
+        // given
+        val openAi = profile(3, "OpenAI", null, "gpt-image-1" to true)
+        val chat = ConversationEntity(1, "t", profileId = 3, modelId = "gpt-image-1", systemPrompt = "", createdAt = 0, updatedAt = 0)
+
+        // when
+        val selection = ChatViewModel.resolveSelection(chat, listOf(openAi), AppPrefs(), null)
+
+        // then
+        assertTrue(selection!!.generatesImages)
     }
 }
