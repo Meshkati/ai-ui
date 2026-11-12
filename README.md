@@ -15,7 +15,19 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 ./gradlew :app:testDebugUnitTest        # unit tests
 ```
 
-Release builds are signed with the debug key so they install over debug builds. Create a real signing key before sharing the APK with anyone.
+Local release builds are signed with the debug key. Debug builds install as `dev.aiui.debug`, next to the released app.
+
+## Releases
+
+Push a tag `vMAJOR.MINOR.PATCH` (each 0-99) and the Release workflow publishes a GitHub Release with the signed APK and its SHA-256. The tag sets `versionName`, and `versionCode` is `MAJOR*10000 + MINOR*100 + PATCH`.
+
+```sh
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+CI runs the unit tests on every pull request and push to `main`. To build a debug APK from any branch, run the CI workflow by hand (Actions → CI → Run workflow).
+
+Signing needs three repository secrets: `KEYSTORE_BASE64` (the PKCS12 keystore, base64), `KEYSTORE_PASSWORD` and `KEY_ALIAS`.
 
 ## Connecting to your computer
 
