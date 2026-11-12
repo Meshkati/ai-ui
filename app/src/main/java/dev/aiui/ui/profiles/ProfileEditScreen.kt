@@ -7,7 +7,9 @@ import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG
 import androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,11 +21,15 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Delete
@@ -59,8 +65,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -74,12 +85,23 @@ import dev.aiui.data.makesImages
 import dev.aiui.llm.ApiFormat
 import dev.aiui.ui.components.QrScanDialog
 import dev.aiui.ui.components.clickableRow
+import dev.aiui.ui.theme.AccentTheme
+import dev.aiui.ui.theme.Accents
 import dev.aiui.ui.theme.MonoFamily
+import dev.aiui.ui.theme.accentColorScheme
+import dev.aiui.ui.theme.isDark
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileEditScreen(vm: ProfileEditViewModel, onDone: () -> Unit) {
     val form by vm.form.collectAsStateWithLifecycle()
+    val defaultAccent = MaterialTheme.colorScheme.primary
+    // The editor previews the colour the chat will use with this profile.
+    AccentTheme(form.accentColor) { ProfileEditContent(vm, form, defaultAccent, onDone) }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProfileEditContent(vm: ProfileEditViewModel, form: ProfileForm, defaultAccent: Color, onDone: () -> Unit) {
     val context = LocalContext.current
     var confirmDelete by remember { mutableStateOf(false) }
     var addingModel by remember { mutableStateOf(false) }
@@ -148,6 +170,12 @@ fun ProfileEditScreen(vm: ProfileEditViewModel, onDone: () -> Unit) {
                 placeholder = { Text("Shown in the profile list") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
+            )
+
+            AccentPicker(
+                selected = form.accentColor,
+                defaultColor = defaultAccent,
+                onSelect = { seed -> vm.update { it.copy(accentColor = seed) } },
             )
 
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -385,6 +413,44 @@ private fun ApiKeyField(
 private enum class ScanTarget(val action: String, val hint: String) {
     BaseUrl("Scan base URL from a QR code", "Point at a QR code with the base URL"),
     ApiKey("Scan API key from a QR code", "Point at a QR code with the API key"),
+}
+
+/** The profile's colour: the app's own colours, or one of [Accents]. */
+@Composable
+private fun AccentPicker(selected: Int?, defaultColor: Color, onSelect: (Int?) -> Unit) {
+    val dark = MaterialTheme.colorScheme.isDark
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Colour", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier
+                .selectableGroup()
+                .horizontalScroll(rememberScrollState()),
+        ) {
+            AccentSwatch("Default", defaultColor, selected == null) { onSelect(null) }
+            Accents.forEach { accent ->
+                val color = remember(accent.seed, dark) { accentColorScheme(accent.seed, dark).primary }
+                AccentSwatch(accent.name, color, selected == accent.seed) { onSelect(accent.seed) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AccentSwatch(name: String, color: Color, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .background(color)
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
+            .semantics { contentDescription = name },
+    ) {
+        if (selected) {
+            Icon(Icons.Filled.Check, contentDescription = null, tint = if (color.luminance() > 0.4f) Color.Black else Color.White)
+        }
+    }
 }
 
 @Composable

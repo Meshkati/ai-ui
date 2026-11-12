@@ -51,6 +51,8 @@ data class Selection(
     val generatesImages: Boolean = false,
     /** False when the chat's profile or model no longer exists. */
     val available: Boolean = true,
+    /** The profile's colour seed; null keeps the app's colours. */
+    val accentColor: Int? = null,
 )
 
 data class UiMessage(
@@ -407,6 +409,7 @@ class ChatViewModel(container: AppContainer) : ViewModel() {
                     supportsAttachments = model?.supportsAttachments ?: true,
                     generatesImages = profile != null && model != null && model.makesImages(ApiFormat.fromId(profile.profile.format)),
                     available = profile != null,
+                    accentColor = profile?.profile?.accentColor,
                 )
             }
             val candidates = listOfNotNull(pendingPick, prefs.defaultProfileId?.let { id -> prefs.defaultModelId?.let { id to it } })
@@ -425,6 +428,7 @@ class ChatViewModel(container: AppContainer) : ViewModel() {
             modelId = model.modelId,
             supportsAttachments = model.supportsAttachments,
             generatesImages = model.makesImages(ApiFormat.fromId(profile.profile.format)),
+            accentColor = profile.profile.accentColor,
         )
     }
 }
