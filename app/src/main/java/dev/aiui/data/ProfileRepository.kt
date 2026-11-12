@@ -45,6 +45,7 @@ data class ProfileDraft(
     val extraBody: String,
     val allowInsecure: Boolean,
     val models: List<ModelEntity>,
+    val accentColor: Int? = null,
 )
 
 class ProfileRepository(
@@ -102,6 +103,7 @@ class ProfileRepository(
             allowInsecure = draft.allowInsecure,
             lastModelId = existing?.lastModelId,
             createdAt = existing?.createdAt ?: System.currentTimeMillis(),
+            accentColor = draft.accentColor,
         )
         val id = if (existing == null) db.profiles().insert(entity) else entity.id.also { db.profiles().update(entity) }
         db.models().deleteForProfile(id)

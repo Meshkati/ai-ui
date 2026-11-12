@@ -55,6 +55,8 @@ data class ProfileForm(
     val revealedKey: String? = null,
     val removeKey: Boolean = false,
     val allowInsecure: Boolean = false,
+    /** Null keeps the app's colours. */
+    val accentColor: Int? = null,
     val extraHeaders: String = "",
     val extraBody: String = "",
     val models: List<ModelEntity> = emptyList(),
@@ -108,6 +110,7 @@ class ProfileEditViewModel(container: AppContainer, private val profileId: Long?
                     baseUrl = profile.baseUrl,
                     hasSavedKey = profile.apiKeyEncrypted != null,
                     allowInsecure = profile.allowInsecure,
+                    accentColor = profile.accentColor,
                     extraHeaders = profile.extraHeaders.takeIf { it != "{}" }.orEmpty(),
                     extraBody = profile.extraBody.takeIf { it != "{}" }.orEmpty(),
                     models = repo.models(profileId),
@@ -201,6 +204,7 @@ class ProfileEditViewModel(container: AppContainer, private val profileId: Long?
                     extraBody = form.extraBody,
                     allowInsecure = form.allowInsecure,
                     models = form.models,
+                    accentColor = form.accentColor,
                 ),
             )
             _done.tryEmit(Unit)

@@ -21,6 +21,8 @@ data class ProfileEntity(
     val allowInsecure: Boolean = false,
     val lastModelId: String? = null,
     val createdAt: Long,
+    /** ARGB seed the chat's colours are built from while this profile is in use. Null keeps the app's colours. */
+    val accentColor: Int? = null,
 )
 
 @Entity(
