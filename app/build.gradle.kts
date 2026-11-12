@@ -19,7 +19,8 @@ android {
         targetSdk = 36
         // CI sets these from the release tag: -PversionCode=... -PversionName=...
         versionCode = providers.gradleProperty("versionCode").orNull?.toInt() ?: 1
-        versionName = providers.gradleProperty("versionName").orNull ?: "0.1.0"
+        // Not MAJOR.MINOR.PATCH, so a local build never offers a release it can't install over.
+        versionName = providers.gradleProperty("versionName").orNull ?: "0.0.0-local"
     }
 
     signingConfigs {

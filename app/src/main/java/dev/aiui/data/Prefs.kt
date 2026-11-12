@@ -29,13 +29,46 @@ data class AppPrefs(
     val textToSpeech: ModelChoice? = null,
 )
 
+/** What the update check last learned from GitHub ([dev.aiui.update.UpdateChecker]). */
+data class UpdatePrefs(
+    /** The latest release tag GitHub reported, e.g. "v0.2.0". Empty before the first check. */
+    val latestRelease: String = "",
+    /** The newest release the chat screen already told the user about. */
+    val toldRelease: String = "",
+    /** When the app may ask GitHub again, in milliseconds since the epoch. */
+    val nextCheck: Long = 0,
+)
+
 private val Context.dataStore by preferencesDataStore(name = "prefs")
 
 class PrefsRepository(private val context: Context) {
 
     val prefs: Flow<AppPrefs> = context.dataStore.data.map { it.toAppPrefs() }
 
+    val updates: Flow<UpdatePrefs> = context.dataStore.data.map {
+        UpdatePrefs(
+            latestRelease = it[LATEST_RELEASE].orEmpty(),
+            toldRelease = it[TOLD_RELEASE].orEmpty(),
+            nextCheck = it[NEXT_UPDATE_CHECK] ?: 0,
+        )
+    }
+
     suspend fun current(): AppPrefs = prefs.first()
+
+    suspend fun setLatestRelease(tag: String, nextCheck: Long) {
+        context.dataStore.edit {
+            it[LATEST_RELEASE] = tag
+            it[NEXT_UPDATE_CHECK] = nextCheck
+        }
+    }
+
+    suspend fun setNextUpdateCheck(at: Long) {
+        context.dataStore.edit { it[NEXT_UPDATE_CHECK] = at }
+    }
+
+    suspend fun setToldRelease(tag: String) {
+        context.dataStore.edit { it[TOLD_RELEASE] = tag }
+    }
 
     suspend fun setPersonalization(displayName: String, systemPrompt: String) {
         context.dataStore.edit {
@@ -103,5 +136,8 @@ class PrefsRepository(private val context: Context) {
         val STT_MODEL = stringPreferencesKey("stt_model")
         val TTS_PROFILE = longPreferencesKey("tts_profile")
         val TTS_MODEL = stringPreferencesKey("tts_model")
+        val LATEST_RELEASE = stringPreferencesKey("latest_release")
+        val TOLD_RELEASE = stringPreferencesKey("told_release")
+        val NEXT_UPDATE_CHECK = longPreferencesKey("next_update_check")
     }
 }

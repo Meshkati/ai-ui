@@ -20,6 +20,7 @@ import dev.aiui.data.db.ModelEntity
 import dev.aiui.data.db.MessageWithAttachments
 import dev.aiui.data.makesImages
 import dev.aiui.llm.ApiFormat
+import dev.aiui.update.Version
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -91,6 +92,10 @@ class ChatViewModel(container: AppContainer) : ViewModel() {
     private val speech = container.speech
     private val recorder = container.voiceRecorder
     private val player = container.speechPlayer
+    private val updates = container.updates
+
+    /** A newer release on GitHub that the user hasn't been told about yet. */
+    val untoldUpdate = updates.untold
 
     private val conversationId = MutableStateFlow<Long?>(null)
     private val pendingSelection = MutableStateFlow<Pair<Long, String>?>(null)
@@ -158,6 +163,12 @@ class ChatViewModel(container: AppContainer) : ViewModel() {
             canReadAloud = profiles.audioProfileFor(prefs.textToSpeech) != null,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState())
+
+    init {
+        viewModelScope.launch { updates.checkIfDue() }
+    }
+
+    fun markUpdateTold(version: Version) = viewModelScope.launch { updates.markTold(version) }
 
     fun openConversation(id: Long) {
         if (conversationId.value == id) return
