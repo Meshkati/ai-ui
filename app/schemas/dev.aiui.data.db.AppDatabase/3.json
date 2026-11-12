@@ -2,11 +2,11 @@
   "formatVersion": 1,
   "database": {
     "version": 3,
-    "identityHash": "728037bd61f9391015535f77694ee2f3",
+    "identityHash": "0d22d4ee06c492fa46dc1367317b8405",
     "entities": [
       {
         "tableName": "profile",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `format` TEXT NOT NULL, `baseUrl` TEXT NOT NULL, `apiKeyEncrypted` TEXT, `extraHeaders` TEXT NOT NULL, `extraBody` TEXT NOT NULL, `allowInsecure` INTEGER NOT NULL, `lastModelId` TEXT, `createdAt` INTEGER NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `format` TEXT NOT NULL, `baseUrl` TEXT NOT NULL, `apiKeyEncrypted` TEXT, `extraHeaders` TEXT NOT NULL, `extraBody` TEXT NOT NULL, `allowInsecure` INTEGER NOT NULL, `lastModelId` TEXT, `createdAt` INTEGER NOT NULL, `accentColor` INTEGER)",
         "fields": [
           {
             "fieldPath": "id",
@@ -65,6 +65,11 @@
             "columnName": "createdAt",
             "affinity": "INTEGER",
             "notNull": true
+          },
+          {
+            "fieldPath": "accentColor",
+            "columnName": "accentColor",
+            "affinity": "INTEGER"
           }
         ],
         "primaryKey": {
@@ -216,7 +221,7 @@
       },
       {
         "tableName": "message",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `conversationId` INTEGER NOT NULL, `role` TEXT NOT NULL, `text` TEXT NOT NULL, `rawBlocks` TEXT, `profileId` INTEGER, `modelId` TEXT, `status` TEXT NOT NULL, `stopReason` TEXT, `error` TEXT, `inputTokens` INTEGER, `outputTokens` INTEGER, `memoryUpdated` INTEGER NOT NULL DEFAULT 0, `createdAt` INTEGER NOT NULL, FOREIGN KEY(`conversationId`) REFERENCES `conversation`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `conversationId` INTEGER NOT NULL, `role` TEXT NOT NULL, `text` TEXT NOT NULL, `rawBlocks` TEXT, `profileId` INTEGER, `modelId` TEXT, `status` TEXT NOT NULL, `stopReason` TEXT, `error` TEXT, `inputTokens` INTEGER, `outputTokens` INTEGER, `createdAt` INTEGER NOT NULL, FOREIGN KEY(`conversationId`) REFERENCES `conversation`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
         "fields": [
           {
             "fieldPath": "id",
@@ -282,13 +287,6 @@
             "fieldPath": "outputTokens",
             "columnName": "outputTokens",
             "affinity": "INTEGER"
-          },
-          {
-            "fieldPath": "memoryUpdated",
-            "columnName": "memoryUpdated",
-            "affinity": "INTEGER",
-            "notNull": true,
-            "defaultValue": "0"
           },
           {
             "fieldPath": "createdAt",
@@ -405,41 +403,11 @@
             ]
           }
         ]
-      },
-      {
-        "tableName": "memory",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `text` TEXT NOT NULL, `createdAt` INTEGER NOT NULL)",
-        "fields": [
-          {
-            "fieldPath": "id",
-            "columnName": "id",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "text",
-            "columnName": "text",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "createdAt",
-            "columnName": "createdAt",
-            "affinity": "INTEGER",
-            "notNull": true
-          }
-        ],
-        "primaryKey": {
-          "autoGenerate": true,
-          "columnNames": [
-            "id"
-          ]
-        }
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '728037bd61f9391015535f77694ee2f3')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '0d22d4ee06c492fa46dc1367317b8405')"
     ]
   }
 }

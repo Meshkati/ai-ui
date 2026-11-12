@@ -1,6 +1,8 @@
 package dev.aiui.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
@@ -19,6 +21,7 @@ import dev.aiui.ui.profiles.ProfileEditScreen
 import dev.aiui.ui.profiles.ProfileEditViewModel
 import dev.aiui.ui.settings.SettingsScreen
 import dev.aiui.ui.settings.SettingsViewModel
+import dev.aiui.ui.theme.AccentTheme
 
 object Routes {
     const val CHAT = "chat"
@@ -37,13 +40,17 @@ fun AppNavigation(container: AppContainer) {
     NavHost(navController = nav, startDestination = Routes.CHAT) {
         composable(Routes.CHAT) {
             val vm: ChatViewModel = viewModel(factory = viewModelFactory { initializer { ChatViewModel(container) } })
-            ChatScreen(
-                vm = vm,
-                onOpenSettings = { nav.navigate(Routes.SETTINGS) },
-                onAddProfile = { nav.navigate(Routes.profile(null)) },
-                onEditProfile = { nav.navigate(Routes.profile(it)) },
-                onOpenMemory = { nav.navigate(Routes.MEMORY) },
-            )
+            val state by vm.state.collectAsStateWithLifecycle()
+            // The chat takes the colours of the profile it is talking to.
+            AccentTheme(state.selection?.accentColor) {
+                ChatScreen(
+                    vm = vm,
+                    onOpenSettings = { nav.navigate(Routes.SETTINGS) },
+                    onAddProfile = { nav.navigate(Routes.profile(null)) },
+                    onEditProfile = { nav.navigate(Routes.profile(it)) },
+                    onOpenMemory = { nav.navigate(Routes.MEMORY) },
+                )
+            }
         }
         composable(Routes.SETTINGS) {
             val vm: SettingsViewModel = viewModel(factory = viewModelFactory { initializer { SettingsViewModel(container) } })
