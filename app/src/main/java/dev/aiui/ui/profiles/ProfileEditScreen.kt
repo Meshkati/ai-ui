@@ -29,6 +29,7 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -70,6 +71,7 @@ import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.aiui.data.db.ModelEntity
 import dev.aiui.llm.ApiFormat
+import dev.aiui.ui.components.QrScanDialog
 import dev.aiui.ui.components.clickableRow
 import dev.aiui.ui.theme.MonoFamily
 
@@ -84,6 +86,7 @@ fun ProfileEditScreen(vm: ProfileEditViewModel, onDone: () -> Unit) {
     var advanced by remember { mutableStateOf(form.extraHeaders.isNotBlank() || form.extraBody.isNotBlank()) }
     var modelFilter by remember { mutableStateOf("") }
     var keyError by remember { mutableStateOf<String?>(null) }
+    var scanning by remember { mutableStateOf<ScanTarget?>(null) }
 
     LaunchedEffect(vm) { vm.done.collect { onDone() } }
 
@@ -168,6 +171,7 @@ fun ProfileEditScreen(vm: ProfileEditViewModel, onDone: () -> Unit) {
                 supportingText = (form.urlError ?: form.presetHint)?.let { text -> { Text(text) } },
                 textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = MonoFamily),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                trailingIcon = { ScanButton(ScanTarget.BaseUrl, onClick = { scanning = ScanTarget.BaseUrl }) },
                 modifier = Modifier.fillMaxWidth(),
             )
 
@@ -190,6 +194,7 @@ fun ProfileEditScreen(vm: ProfileEditViewModel, onDone: () -> Unit) {
                     authenticate(context, form.name, onSuccess = vm::reveal, onError = { keyError = it })
                 },
                 onRemove = vm::removeKey,
+                onScan = { scanning = ScanTarget.ApiKey },
                 error = keyError,
             )
 
@@ -257,6 +262,20 @@ fun ProfileEditScreen(vm: ProfileEditViewModel, onDone: () -> Unit) {
         }
     }
 
+    scanning?.let { target ->
+        QrScanDialog(
+            hint = target.hint,
+            onResult = { text ->
+                scanning = null
+                val value = text.trim()
+                when (target) {
+                    ScanTarget.BaseUrl -> vm.update { it.copy(baseUrl = value, test = TestState.Idle) }
+                    ScanTarget.ApiKey -> vm.update { it.copy(apiKey = value, removeKey = false, test = TestState.Idle) }
+                }
+            },
+            onDismiss = { scanning = null },
+        )
+    }
     if (confirmDelete) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
@@ -312,6 +331,7 @@ private fun ApiKeyField(
     onChange: (String) -> Unit,
     onReveal: () -> Unit,
     onRemove: () -> Unit,
+    onScan: () -> Unit,
     error: String?,
 ) {
     val savedAndHidden = form.hasSavedKey && form.revealedKey == null && !form.removeKey
@@ -332,10 +352,13 @@ private fun ApiKeyField(
             visualTransformation = if (form.revealedKey != null) VisualTransformation.None else PasswordVisualTransformation(),
             textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = MonoFamily),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-            trailingIcon = if (savedAndHidden) {
-                { IconButton(onClick = onReveal) { Icon(Icons.Outlined.Visibility, contentDescription = "Show saved key") } }
-            } else {
-                null
+            trailingIcon = {
+                Row {
+                    if (savedAndHidden) {
+                        IconButton(onClick = onReveal) { Icon(Icons.Outlined.Visibility, contentDescription = "Show saved key") }
+                    }
+                    ScanButton(ScanTarget.ApiKey, onClick = onScan)
+                }
             },
             supportingText = {
                 Text(error ?: "Encrypted on this phone with a hardware-backed key. Showing it asks for your fingerprint or screen lock.")
@@ -354,6 +377,16 @@ private fun ApiKeyField(
             )
         }
     }
+}
+
+private enum class ScanTarget(val action: String, val hint: String) {
+    BaseUrl("Scan base URL from a QR code", "Point at a QR code with the base URL"),
+    ApiKey("Scan API key from a QR code", "Point at a QR code with the API key"),
+}
+
+@Composable
+private fun ScanButton(target: ScanTarget, onClick: () -> Unit) {
+    IconButton(onClick = onClick) { Icon(Icons.Outlined.QrCodeScanner, contentDescription = target.action) }
 }
 
 @Composable
