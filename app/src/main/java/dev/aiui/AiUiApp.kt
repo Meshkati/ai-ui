@@ -18,6 +18,8 @@ import dev.aiui.llm.AnthropicAdapter
 import dev.aiui.llm.ApiFormat
 import dev.aiui.llm.OpenAiCompatAdapter
 import dev.aiui.llm.buildHttpClient
+import dev.aiui.update.GitHubReleases
+import dev.aiui.update.UpdateChecker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -40,6 +42,7 @@ class AppContainer(app: Application) {
     val speech = SpeechRepository(profiles, prefs, openAi)
     val voiceRecorder = VoiceRecorder(app)
     val speechPlayer = SpeechPlayer(app)
+    val updates = UpdateChecker(prefs, GitHubReleases(http), BuildConfig.VERSION_NAME)
 }
 
 class AiUiApp : Application(), SingletonImageLoader.Factory {

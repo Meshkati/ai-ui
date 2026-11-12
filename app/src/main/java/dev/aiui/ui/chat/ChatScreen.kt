@@ -44,7 +44,9 @@ import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -62,13 +64,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.aiui.data.db.AttachmentEntity
 import dev.aiui.ui.components.ProfileModelPickerSheet
+import dev.aiui.update.Updates
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -95,6 +100,20 @@ fun ChatScreen(
     var cameraUri by rememberSaveable { mutableStateOf<Uri?>(null) }
 
     LaunchedEffect(vm) { vm.notices.collect { snackbar.showSnackbar(it) } }
+
+    // Told once per release; Settings keeps offering it after that.
+    val uriHandler = LocalUriHandler.current
+    LaunchedEffect(vm) {
+        vm.untoldUpdate.filterNotNull().collect { version ->
+            vm.markUpdateTold(version)
+            val result = snackbar.showSnackbar(
+                "Version $version is available",
+                actionLabel = "Download",
+                duration = SnackbarDuration.Long,
+            )
+            if (result == SnackbarResult.ActionPerformed) runCatching { uriHandler.openUri(Updates.releasePage(version)) }
+        }
+    }
 
     // Follow the newest message unless the user has scrolled up to read; sending re-enables following.
     // The list is reversed, so item 0 is the newest message at the bottom.

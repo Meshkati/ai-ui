@@ -43,13 +43,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import dev.aiui.AppContainer
-import dev.aiui.BuildConfig
 import dev.aiui.data.AppPrefs
 import dev.aiui.data.ModelChoice
 import dev.aiui.data.ThemeMode
@@ -59,6 +59,7 @@ import dev.aiui.ui.components.LocalBadge
 import dev.aiui.ui.components.ProfileModelPickerSheet
 import dev.aiui.ui.components.clickableRow
 import dev.aiui.ui.components.isLocal
+import dev.aiui.update.Updates
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
@@ -71,6 +72,16 @@ class SettingsViewModel(container: AppContainer) : ViewModel() {
     private val chats = container.chats
     val profiles = container.profiles.profiles.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val prefs = prefsRepo.prefs.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppPrefs())
+    private val updates = container.updates
+    val installedVersion = updates.installed
+    val newerVersion = updates.newer.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    var checkingForUpdate by mutableStateOf(false)
+        private set
+
+    /** What the user's last check found; null before they check. */
+    var updateFound by mutableStateOf<Updates.Found?>(null)
+        private set
 
     fun setDefault(profileId: Long, modelId: String) = viewModelScope.launch { prefsRepo.setDefaultModel(profileId, modelId) }
     fun setTheme(theme: ThemeMode) = viewModelScope.launch { prefsRepo.setTheme(theme) }
@@ -79,6 +90,15 @@ class SettingsViewModel(container: AppContainer) : ViewModel() {
     fun setDynamicColor(enabled: Boolean) = viewModelScope.launch { prefsRepo.setDynamicColor(enabled) }
     fun deleteAllChats() = viewModelScope.launch { chats.deleteAll() }
     suspend fun exportJson(): String = chats.exportJson()
+
+    fun checkForUpdate() {
+        if (checkingForUpdate) return
+        checkingForUpdate = true
+        viewModelScope.launch {
+            updateFound = updates.checkNow()
+            checkingForUpdate = false
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -90,6 +110,8 @@ fun SettingsScreen(
     onOpenPersonalization: () -> Unit,
 ) {
     val profiles by vm.profiles.collectAsStateWithLifecycle()
+    val newerVersion by vm.newerVersion.collectAsStateWithLifecycle()
+    val uriHandler = LocalUriHandler.current
     val prefs by vm.prefs.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -214,8 +236,32 @@ fun SettingsScreen(
                 }
             }
             item {
+                Section("About") {
+                    val newer = newerVersion
+                    if (newer != null) {
+                        Row_(
+                            "Download version $newer",
+                            "You have ${vm.installedVersion}",
+                            onClick = { runCatching { uriHandler.openUri(Updates.releasePage(newer)) } },
+                        )
+                    } else {
+                        Row_(
+                            "Check for updates",
+                            updateStatus(vm.installedVersion, vm.checkingForUpdate, vm.updateFound),
+                            onClick = vm::checkForUpdate,
+                        )
+                    }
+                    Divider()
+                    Row_(
+                        "Source code",
+                        Updates.SOURCE_URL.removePrefix("https://"),
+                        onClick = { runCatching { uriHandler.openUri(Updates.SOURCE_URL) } },
+                    )
+                }
+            }
+            item {
                 Text(
-                    "AI UI ${BuildConfig.VERSION_NAME}. Chats, profiles and keys stay on this phone.",
+                    "Chats, profiles and keys stay on this phone. Release builds ask GitHub for a new version once a day.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 8.dp),
@@ -264,6 +310,14 @@ fun SettingsScreen(
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
         )
     }
+}
+
+private fun updateStatus(installed: String, checking: Boolean, found: Updates.Found?): String = when {
+    checking -> "Checking GitHub…"
+    found == Updates.Found.UpToDate -> "Version $installed is the latest"
+    found == Updates.Found.Failed -> "Couldn't reach GitHub. Try again later."
+    found is Updates.Found.NotARelease -> "This build doesn't update. The latest is ${found.latest}."
+    else -> "Version $installed"
 }
 
 @Composable
