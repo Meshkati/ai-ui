@@ -196,4 +196,66 @@ class AnthropicAdapterTest {
         // then
         assertEquals(listOf(RemoteModel("claude-opus-5-5", "Claude Opus 5.5", 128_000)), models)
     }
+
+    @Test
+    fun streamedToolUse_endsWithTheCallAndItsParsedArguments() = runBlocking {
+        // given
+        server.enqueue(
+            sse(
+                "message_start" to """{"type":"message_start","message":{}}""",
+                "content_block_start" to """{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"remember","input":{}}}""",
+                "content_block_delta" to """{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"text\": \"Lives"}}""",
+                "content_block_delta" to """{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":" in Berlin\"}"}}""",
+                "content_block_stop" to """{"type":"content_block_stop","index":0}""",
+                "message_delta" to """{"type":"message_delta","delta":{"stop_reason":"tool_use"}}""",
+                "message_stop" to """{"type":"message_stop"}""",
+            ),
+        )
+
+        // when
+        val done = adapter.stream(endpoint(), request()).toList().last() as StreamEvent.Done
+
+        // then
+        val call = done.toolCalls.single()
+        assertEquals("toolu_1", call.id)
+        assertEquals("remember", call.name)
+        assertEquals("Lives in Berlin", call.arguments["text"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun requestWithTools_sendsEachWithItsInputSchema() {
+        // given
+        val schema = buildJsonObject { put("type", "object") }
+        val withTools = request().copy(tools = listOf(LlmTool("remember", "Saves a fact.", schema)))
+
+        // when
+        val body = AnthropicAdapter.buildBody(withTools, JsonObject(emptyMap()))
+
+        // then
+        val tool = body["tools"]!!.jsonArray.single().jsonObject
+        assertEquals("remember", tool["name"]!!.jsonPrimitive.content)
+        assertEquals(schema, tool["input_schema"])
+    }
+
+    @Test
+    fun toolCallAndItsResult_areSentAsToolUseAndToolResultBlocks() {
+        // given
+        val call = ToolCall("toolu_1", "forget", buildJsonObject { put("id", 3) })
+        val history = request(
+            LlmMessage(Role.USER, listOf(LlmPart.Text("Forget my city"))),
+            LlmMessage(Role.ASSISTANT, listOf(LlmPart.ToolUse(call))),
+            LlmMessage(Role.USER, listOf(LlmPart.ToolResult("toolu_1", "No memory #3", isError = true))),
+        )
+
+        // when
+        val messages = AnthropicAdapter.buildBody(history, JsonObject(emptyMap()))["messages"]!!.jsonArray
+
+        // then
+        val use = messages[1].jsonObject["content"]!!.jsonArray.single().jsonObject
+        val result = messages[2].jsonObject["content"]!!.jsonArray.single().jsonObject
+        assertEquals("tool_use", use["type"]!!.jsonPrimitive.content)
+        assertEquals(call.arguments, use["input"])
+        assertEquals("toolu_1", result["tool_use_id"]!!.jsonPrimitive.content)
+        assertEquals("true", result["is_error"]!!.jsonPrimitive.content)
+    }
 }

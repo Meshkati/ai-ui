@@ -3,9 +3,11 @@ package dev.aiui.llm
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import org.junit.After
@@ -112,5 +114,68 @@ class OpenAiCompatAdapterTest {
         val parts = body["messages"]!!.jsonArray[1].jsonObject["content"]!!.jsonArray
         val url = parts[0].jsonObject["image_url"]!!.jsonObject["url"]!!.jsonPrimitive.content
         assertEquals("data:image/jpeg;base64,QUJD", url)
+    }
+
+    @Test
+    fun toolCallSplitAcrossChunks_endsWithOneCallAndParsedArguments() = runBlocking {
+        // given
+        server.enqueue(
+            chunks(
+                """{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_9","type":"function","function":{"name":"remember","arguments":""}}]}}]}""",
+                """{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"text\":"}}]}}]}""",
+                """{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"Vegetarian\"}"}}]},"finish_reason":"tool_calls"}]}""",
+                "[DONE]",
+            ),
+        )
+
+        // when
+        val done = adapter.stream(endpoint(), request()).toList().last() as StreamEvent.Done
+
+        // then
+        val call = done.toolCalls.single()
+        assertEquals("call_9", call.id)
+        assertEquals("remember", call.name)
+        assertEquals("Vegetarian", call.arguments["text"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun requestWithTools_sendsThemAsFunctions() {
+        // given
+        val schema = buildJsonObject { put("type", "object") }
+        val withTools = request().copy(tools = listOf(LlmTool("remember", "Saves a fact.", schema)))
+
+        // when
+        val body = OpenAiCompatAdapter.buildBody(withTools, JsonObject(emptyMap()))
+
+        // then
+        val tool = body["tools"]!!.jsonArray.single().jsonObject
+        assertEquals("function", tool["type"]!!.jsonPrimitive.content)
+        assertEquals("remember", tool["function"]!!.jsonObject["name"]!!.jsonPrimitive.content)
+        assertEquals(schema, tool["function"]!!.jsonObject["parameters"])
+    }
+
+    @Test
+    fun toolCallAndItsResult_areSentAsToolCallsAndAToolMessage() {
+        // given
+        val call = ToolCall("call_9", "forget", buildJsonObject { put("id", 3) })
+        val history = request().copy(
+            messages = listOf(
+                LlmMessage(Role.USER, listOf(LlmPart.Text("Forget my city"))),
+                LlmMessage(Role.ASSISTANT, listOf(LlmPart.Text("Sure."), LlmPart.ToolUse(call))),
+                LlmMessage(Role.USER, listOf(LlmPart.ToolResult("call_9", "Forgotten"))),
+            ),
+        )
+
+        // when
+        val messages = OpenAiCompatAdapter.buildBody(history, JsonObject(emptyMap()))["messages"]!!.jsonArray
+
+        // then
+        val assistant = messages[2].jsonObject
+        val sentCall = assistant["tool_calls"]!!.jsonArray.single().jsonObject
+        val result = messages[3].jsonObject
+        assertEquals("Sure.", assistant["content"]!!.jsonPrimitive.content)
+        assertEquals("""{"id":3}""", sentCall["function"]!!.jsonObject["arguments"]!!.jsonPrimitive.content)
+        assertEquals("tool", result["role"]!!.jsonPrimitive.content)
+        assertEquals("call_9", result["tool_call_id"]!!.jsonPrimitive.content)
     }
 }
