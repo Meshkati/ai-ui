@@ -52,6 +52,7 @@ class ChatRepository(
     private val profiles: ProfileRepository,
     private val prefs: PrefsRepository,
     private val attachments: AttachmentStore,
+    private val memory: MemoryRepository,
     private val clients: Map<ApiFormat, LlmClient>,
     private val images: OpenAiCompatAdapter,
     private val scope: CoroutineScope,
@@ -251,7 +252,7 @@ class ChatRepository(
             }
             val request = LlmRequest(
                 model = modelId,
-                system = conversation.systemPrompt,
+                system = if (prefs.current().memory) memory.systemPrompt(conversation.systemPrompt) else conversation.systemPrompt,
                 messages = buildHistory(history, conversation, endpoint.format, endpoint.baseUrl),
                 maxOutputTokens = model?.maxOutputTokens ?: AnthropicAdapter.DEFAULT_MAX_TOKENS,
             )

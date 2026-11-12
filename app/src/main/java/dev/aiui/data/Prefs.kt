@@ -27,6 +27,10 @@ data class AppPrefs(
     val speechToText: ModelChoice? = null,
     /** Reads replies aloud. Null when read aloud is off. */
     val textToSpeech: ModelChoice? = null,
+    /** Saved memories are sent with every chat. */
+    val memory: Boolean = true,
+    /** Models may save and forget memories. Off for models that save badly. */
+    val memoryUpdates: Boolean = true,
 )
 
 /** What the update check last learned from GitHub ([dev.aiui.update.UpdateChecker]). */
@@ -92,6 +96,14 @@ class PrefsRepository(private val context: Context) {
         context.dataStore.edit { it[DYNAMIC_COLOR] = enabled }
     }
 
+    suspend fun setMemory(enabled: Boolean) {
+        context.dataStore.edit { it[MEMORY] = enabled }
+    }
+
+    suspend fun setMemoryUpdates(enabled: Boolean) {
+        context.dataStore.edit { it[MEMORY_UPDATES] = enabled }
+    }
+
     suspend fun setSpeechToText(choice: ModelChoice?) = setChoice(STT_PROFILE, STT_MODEL, choice)
 
     suspend fun setTextToSpeech(choice: ModelChoice?) = setChoice(TTS_PROFILE, TTS_MODEL, choice)
@@ -123,6 +135,8 @@ class PrefsRepository(private val context: Context) {
         dynamicColor = this[DYNAMIC_COLOR] ?: true,
         speechToText = choice(STT_PROFILE, STT_MODEL),
         textToSpeech = choice(TTS_PROFILE, TTS_MODEL),
+        memory = this[MEMORY] ?: true,
+        memoryUpdates = this[MEMORY_UPDATES] ?: true,
     )
 
     private companion object {
@@ -139,5 +153,7 @@ class PrefsRepository(private val context: Context) {
         val LATEST_RELEASE = stringPreferencesKey("latest_release")
         val TOLD_RELEASE = stringPreferencesKey("told_release")
         val NEXT_UPDATE_CHECK = longPreferencesKey("next_update_check")
+        val MEMORY = booleanPreferencesKey("memory")
+        val MEMORY_UPDATES = booleanPreferencesKey("memory_updates")
     }
 }

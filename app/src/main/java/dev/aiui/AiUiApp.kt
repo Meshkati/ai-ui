@@ -10,6 +10,7 @@ import dev.aiui.audio.VoiceRecorder
 import dev.aiui.data.AttachmentStore
 import dev.aiui.data.ChatRepository
 import dev.aiui.data.KeyVault
+import dev.aiui.data.MemoryRepository
 import dev.aiui.data.PrefsRepository
 import dev.aiui.data.ProfileRepository
 import dev.aiui.data.SpeechRepository
@@ -38,7 +39,8 @@ class AppContainer(app: Application) {
         ApiFormat.OPENAI to openAi,
     )
     val profiles = ProfileRepository(db, KeyVault(), clients)
-    val chats = ChatRepository(db, profiles, prefs, attachments, clients, openAi, appScope)
+    val memory = MemoryRepository(db.memories())
+    val chats = ChatRepository(db, profiles, prefs, attachments, memory, clients, openAi, appScope)
     val speech = SpeechRepository(profiles, prefs, openAi)
     val voiceRecorder = VoiceRecorder(app)
     val speechPlayer = SpeechPlayer(app)

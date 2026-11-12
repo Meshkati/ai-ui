@@ -137,3 +137,24 @@ interface AttachmentDao {
     @Query("SELECT * FROM attachment")
     suspend fun all(): List<AttachmentEntity>
 }
+
+@Dao
+interface MemoryDao {
+    @Query("SELECT * FROM memory ORDER BY id")
+    fun observeAll(): Flow<List<MemoryEntity>>
+
+    @Query("SELECT * FROM memory ORDER BY id")
+    suspend fun all(): List<MemoryEntity>
+
+    @Insert
+    suspend fun insert(memory: MemoryEntity): Long
+
+    @Query("UPDATE memory SET text = :text WHERE id = :id")
+    suspend fun setText(id: Long, text: String): Int
+
+    @Query("DELETE FROM memory WHERE id = :id")
+    suspend fun delete(id: Long): Int
+
+    @Query("DELETE FROM memory")
+    suspend fun deleteAll()
+}

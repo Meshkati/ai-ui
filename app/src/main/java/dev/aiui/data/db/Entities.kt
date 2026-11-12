@@ -1,5 +1,6 @@
 package dev.aiui.data.db
 
+import androidx.room.ColumnInfo
 import androidx.room.Embedded
 import androidx.room.Entity
 import androidx.room.ForeignKey
@@ -100,6 +101,8 @@ data class MessageEntity(
     val error: String? = null,
     val inputTokens: Int? = null,
     val outputTokens: Int? = null,
+    /** True when the model saved or forgot a memory while writing this reply. */
+    @ColumnInfo(defaultValue = "0") val memoryUpdated: Boolean = false,
     val createdAt: Long,
 )
 
@@ -135,4 +138,12 @@ data class MessageWithAttachments(
     @Embedded val message: MessageEntity,
     @Relation(parentColumn = "id", entityColumn = "messageId")
     val attachments: List<AttachmentEntity>,
+)
+
+/** One fact the model saved about the user; sent with every chat while memory is on. */
+@Entity(tableName = "memory")
+data class MemoryEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val text: String,
+    val createdAt: Long,
 )
