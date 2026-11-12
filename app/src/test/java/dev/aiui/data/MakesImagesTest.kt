@@ -21,6 +21,30 @@ class MakesImagesTest {
     }
 
     @Test
+    fun wanImageModel_makesImages() {
+        // given
+        val model = ModelEntity(1, "wan2.7-image-pro")
+
+        // when
+        val makesImages = model.makesImages(ApiFormat.OPENAI)
+
+        // then
+        assertTrue(makesImages)
+    }
+
+    @Test
+    fun wanVideoModel_doesNotMakeImages() {
+        // given
+        val model = ModelEntity(1, "wan2.7-t2v")
+
+        // when
+        val makesImages = model.makesImages(ApiFormat.OPENAI)
+
+        // then
+        assertFalse(makesImages)
+    }
+
+    @Test
     fun chatModel_doesNotMakeImages() {
         // given
         val model = ModelEntity(1, "gpt-5.1")

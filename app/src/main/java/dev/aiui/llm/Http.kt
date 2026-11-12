@@ -83,6 +83,33 @@ fun Request.Builder.applyEndpoint(endpoint: Endpoint): Request.Builder {
     return this
 }
 
+/** A request to [url] that sends the endpoint's key as a bearer token. */
+fun bearerRequest(endpoint: Endpoint, url: String): Request.Builder {
+    val builder = Request.Builder().url(url)
+    endpoint.apiKey?.takeIf { it.isNotBlank() }?.let { builder.header("Authorization", "Bearer $it") }
+    return builder.applyEndpoint(endpoint)
+}
+
+/** Runs [request] and hands a successful response to [read]; anything else fails as an [LlmException]. */
+suspend fun <T> OkHttpClient.fetch(request: Request, read: (Response) -> T): T {
+    val response = try {
+        newCall(request).await()
+    } catch (e: Throwable) {
+        throw mapThrowable(e)
+    }
+    response.use {
+        if (!it.isSuccessful) throw httpError(it)
+        return read(it)
+    }
+}
+
+/** Generated files usually sit on a storage host, so the API key is not sent with them. */
+suspend fun OkHttpClient.download(endpoint: Endpoint, url: String): ByteArray {
+    val request = Request.Builder().url(url).get()
+    if (endpoint.allowInsecure) request.tag(InsecureAllowed::class.java, InsecureAllowed)
+    return fetch(request.build()) { it.body.bytes() }
+}
+
 fun validateUrl(url: String): String? {
     val parsed = url.trim().toHttpUrlOrNull() ?: return "Enter a full URL starting with https:// or http://"
     if (parsed.host.isBlank()) return "The URL has no host"

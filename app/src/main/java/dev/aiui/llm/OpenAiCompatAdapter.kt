@@ -85,6 +85,7 @@ class OpenAiCompatAdapter(private val http: OkHttpClient) : LlmClient {
 
     /** OpenAI Images API. Not retried: a request that timed out may still have been generated and billed. */
     suspend fun generateImages(endpoint: Endpoint, model: String, prompt: String): List<GeneratedImage> {
+        if (isQwenCloudHost(endpoint.baseUrl)) return qwen.generateImages(endpoint, model, prompt)
         val body = buildJsonObject {
             put("model", model)
             put("prompt", prompt)
@@ -93,11 +94,11 @@ class OpenAiCompatAdapter(private val http: OkHttpClient) : LlmClient {
         val request = baseRequest(endpoint, joinUrl(endpoint.baseUrl, "/images/generations"))
             .post(body.toString().toRequestBody(JSON))
             .build()
-        val data = fetch(request) { LenientJson.parseToJsonElement(it.body.string()).jsonObject["data"].orEmptyArray() }
+        val data = slowHttp.fetch(request) { LenientJson.parseToJsonElement(it.body.string()).jsonObject["data"].orEmptyArray() }
         val images = data.mapNotNull { element ->
             val item = element as? JsonObject ?: return@mapNotNull null
             val bytes = item.str("b64_json")?.let { Base64.getDecoder().decode(it) }
-                ?: item.str("url")?.let { downloadImage(endpoint, it) }
+                ?: item.str("url")?.let { slowHttp.download(endpoint, it) }
                 ?: return@mapNotNull null
             GeneratedImage(imageMimeType(bytes), bytes)
         }
@@ -107,20 +108,22 @@ class OpenAiCompatAdapter(private val http: OkHttpClient) : LlmClient {
 
     /** OpenAI audio transcriptions; [audio] is uploaded as one file. */
     suspend fun transcribe(endpoint: Endpoint, model: String, audio: File): String {
+        if (isQwenCloudHost(endpoint.baseUrl)) return qwen.transcribe(endpoint, model, audio)
         val body = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart("model", model)
             .addFormDataPart("response_format", "json")
             .addFormDataPart("file", audio.name, audio.asRequestBody(audioMimeType(audio.name).toMediaType()))
             .build()
-        val request = authorizedRequest(endpoint, joinUrl(endpoint.baseUrl, "/audio/transcriptions")).post(body).build()
-        val text = fetch(request) { LenientJson.parseToJsonElement(it.body.string()).jsonObject.str("text") }
+        val request = bearerRequest(endpoint, joinUrl(endpoint.baseUrl, "/audio/transcriptions")).post(body).build()
+        val text = slowHttp.fetch(request) { LenientJson.parseToJsonElement(it.body.string()).jsonObject.str("text") }
             ?: throw LlmException(ErrorKind.STREAM, "The server replied without a transcript.")
         return text.trim()
     }
 
     /** OpenAI audio speech: the whole of [text] read aloud as one MP3. */
     suspend fun synthesizeSpeech(endpoint: Endpoint, model: String, text: String): ByteArray {
+        if (isQwenCloudHost(endpoint.baseUrl)) return qwen.synthesizeSpeech(endpoint, model, text)
         val body = buildJsonObject {
             put("model", model)
             put("input", text)
@@ -130,39 +133,16 @@ class OpenAiCompatAdapter(private val http: OkHttpClient) : LlmClient {
         val request = baseRequest(endpoint, joinUrl(endpoint.baseUrl, "/audio/speech"))
             .post(body.toString().toRequestBody(JSON))
             .build()
-        return fetch(request) { it.body.bytes() }
-    }
-
-    /** Image URLs usually point at a storage host, so the API key is not sent with them. */
-    private suspend fun downloadImage(endpoint: Endpoint, url: String): ByteArray {
-        val request = Request.Builder().url(url).get()
-        if (endpoint.allowInsecure) request.tag(InsecureAllowed::class.java, InsecureAllowed)
-        return fetch(request.build()) { it.body.bytes() }
-    }
-
-    private suspend fun <T> fetch(request: Request, read: (okhttp3.Response) -> T): T {
-        val response = try {
-            slowHttp.newCall(request).await()
-        } catch (e: Throwable) {
-            throw mapThrowable(e)
-        }
-        response.use {
-            if (!it.isSuccessful) throw httpError(it)
-            return read(it)
-        }
+        return slowHttp.fetch(request) { it.body.bytes() }
     }
 
     // Large images and long recordings can take minutes, with nothing sent until the result is done.
     private val slowHttp by lazy { http.newBuilder().readTimeout(5, TimeUnit.MINUTES).build() }
 
-    private fun baseRequest(endpoint: Endpoint, url: String): Request.Builder =
-        authorizedRequest(endpoint, url).header("content-type", "application/json")
+    private val qwen by lazy { QwenMediaApi(slowHttp) }
 
-    private fun authorizedRequest(endpoint: Endpoint, url: String): Request.Builder {
-        val builder = Request.Builder().url(url)
-        endpoint.apiKey?.takeIf { it.isNotBlank() }?.let { builder.header("Authorization", "Bearer $it") }
-        return builder.applyEndpoint(endpoint)
-    }
+    private fun baseRequest(endpoint: Endpoint, url: String): Request.Builder =
+        bearerRequest(endpoint, url).header("content-type", "application/json")
 
     companion object {
         private val JSON = "application/json".toMediaType()
@@ -230,10 +210,15 @@ private val ImageModelMarkers = listOf(
     "recraft", "ideogram", "seedream", "hidream", "qwen-image",
 )
 
-/** Guesses from the ID whether a model makes images through the Images API rather than chatting. */
-fun looksLikeImageModel(modelId: String): Boolean = modelId.lowercase().let { id -> ImageModelMarkers.any { it in id } }
+/** Wan names its image models like wan2.7-image; its other models make video. */
+private val WanImageModel = Regex("""wan[\d.]*-image""")
 
-private fun audioMimeType(fileName: String): String = when (fileName.substringAfterLast('.').lowercase()) {
+/** Guesses from the ID whether a model makes images through the Images API rather than chatting. */
+fun looksLikeImageModel(modelId: String): Boolean = modelId.lowercase().let { id ->
+    ImageModelMarkers.any { it in id } || WanImageModel.containsMatchIn(id)
+}
+
+internal fun audioMimeType(fileName: String): String = when (fileName.substringAfterLast('.').lowercase()) {
     "m4a", "mp4" -> "audio/mp4"
     "mp3" -> "audio/mpeg"
     "wav" -> "audio/wav"
