@@ -180,8 +180,21 @@ fun ChatScreen(
             regenerate = vm::regenerate,
             edit = vm::startEdit,
             openAttachment = { openAttachment(context, it) },
+            readAloud = vm::toggleReadAloud,
         )
     }
+
+    val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) vm.startRecording() else vm.notify("Allow microphone access in Settings to dictate.")
+    }
+    val onMic = {
+        when {
+            vm.voiceInput == VoiceInput.RECORDING -> vm.finishRecording()
+            context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED -> vm.startRecording()
+            else -> micPermission.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+    val readAloud = ReadAloudState(available = state.canReadAloud, speakingMessageId = vm.speakingMessageId)
 
     BackHandler(enabled = drawerState.isOpen) { scope.launch { drawerState.close() } }
 
@@ -290,7 +303,7 @@ fun ChatScreen(
                             modifier = Modifier.fillMaxSize(),
                         ) {
                             items(state.messages.asReversed(), key = { it.id }) { message ->
-                                MessageItem(message, conversationBusy = state.generating, actions = actions)
+                                MessageItem(message, conversationBusy = state.generating, readAloud = readAloud, actions = actions)
                             }
                         }
                     }
@@ -298,12 +311,20 @@ fun ChatScreen(
                 Composer(
                     text = vm.composerText,
                     onTextChange = { vm.composerText = it },
-                    placeholder = if (selection?.generatesImages == true) "Describe an image" else "Message",
+                    placeholder = when {
+                        vm.voiceInput == VoiceInput.RECORDING -> "Listening. Tap the mic when you're done."
+                        vm.voiceInput == VoiceInput.TRANSCRIBING -> "Transcribing"
+                        selection?.generatesImages == true -> "Describe an image"
+                        else -> "Message"
+                    },
                     pending = vm.pending,
                     importing = vm.importing,
                     editing = vm.editingMessageId != null,
                     generating = state.generating,
                     enabled = selection?.available == true,
+                    canDictate = state.canDictate,
+                    voiceInput = vm.voiceInput,
+                    onMic = onMic,
                     onCancelEdit = vm::cancelEdit,
                     onAttach = { guardAttach { showAttach = true } },
                     onRemove = vm::removeAttachment,

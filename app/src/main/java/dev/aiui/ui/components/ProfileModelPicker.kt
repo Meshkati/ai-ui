@@ -46,14 +46,31 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.aiui.data.ProfileWithModels
+import dev.aiui.data.db.ModelEntity
+import dev.aiui.data.hasAudioApi
 import dev.aiui.data.makesImages
 import dev.aiui.llm.ApiFormat
 import dev.aiui.llm.isLocalNetworkHost
+import dev.aiui.llm.looksLikeSpeechModel
+import dev.aiui.llm.looksLikeTranscriptionModel
 import dev.aiui.ui.theme.MonoFamily
 import kotlinx.coroutines.launch
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
-/** Two steps, as designed: choose a profile, then one of its models. */
+/** What the sheet picks a model for. */
+enum class ModelPurpose { CHAT, SPEECH_TO_TEXT, TEXT_TO_SPEECH }
+
+/** The models offered for [purpose]: switched-on ones for chat, every model with likely matches first for speech. */
+fun ProfileWithModels.modelsFor(purpose: ModelPurpose): List<ModelEntity> = when (purpose) {
+    ModelPurpose.CHAT -> enabledModels
+    ModelPurpose.SPEECH_TO_TEXT -> models.sortedByDescending { looksLikeTranscriptionModel(it.modelId) }
+    ModelPurpose.TEXT_TO_SPEECH -> models.sortedByDescending { looksLikeSpeechModel(it.modelId) }
+}
+
+/**
+ * Two steps, as designed: choose a profile, then one of its models.
+ * [onTurnOff] adds a way to clear the current choice, for features that can be off.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileModelPickerSheet(
@@ -64,7 +81,10 @@ fun ProfileModelPickerSheet(
     onAddProfile: () -> Unit,
     onEditProfile: (Long) -> Unit,
     onDismiss: () -> Unit,
+    purpose: ModelPurpose = ModelPurpose.CHAT,
+    onTurnOff: (() -> Unit)? = null,
 ) {
+    val offered = if (purpose == ModelPurpose.CHAT) profiles else profiles.filter { it.hasAudioApi }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
     var openProfileId by remember { mutableStateOf<Long?>(null) }
@@ -87,17 +107,21 @@ fun ProfileModelPickerSheet(
             },
             label = "picker-step",
         ) { profileId ->
-            val profile = profiles.firstOrNull { it.profile.id == profileId }
+            val profile = offered.firstOrNull { it.profile.id == profileId }
             if (profile == null) {
                 ProfileStep(
-                    profiles = profiles,
+                    profiles = offered,
+                    purpose = purpose,
                     currentProfileId = currentProfileId,
+                    currentModelId = currentModelId,
                     onOpen = { openProfileId = it },
                     onAddProfile = { close(onAddProfile) },
+                    onTurnOff = onTurnOff?.let { turnOff -> { close(turnOff) } },
                 )
             } else {
                 ModelStep(
                     profile = profile,
+                    purpose = purpose,
                     currentModelId = currentModelId.takeIf { currentProfileId == profile.profile.id },
                     onBack = { openProfileId = null },
                     onPick = { modelId -> close { onPick(profile.profile.id, modelId) } },
@@ -129,16 +153,24 @@ private fun StepHeader(step: String, title: String, onBack: (() -> Unit)? = null
 @Composable
 private fun ProfileStep(
     profiles: List<ProfileWithModels>,
+    purpose: ModelPurpose,
     currentProfileId: Long?,
+    currentModelId: String?,
     onOpen: (Long) -> Unit,
     onAddProfile: () -> Unit,
+    onTurnOff: (() -> Unit)?,
 ) {
+    val forChat = purpose == ModelPurpose.CHAT
     Column(Modifier.padding(bottom = 16.dp)) {
         StepHeader("Step 1 of 2", "Choose a profile")
         if (profiles.isEmpty()) {
             Column(Modifier.padding(horizontal = 24.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    "No profiles yet. A profile is one base URL and API key.",
+                    if (forChat) {
+                        "No profiles yet. A profile is one base URL and API key."
+                    } else {
+                        "No OpenAI-compatible profiles yet. Voice needs a server with an audio API."
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -149,12 +181,16 @@ private fun ProfileStep(
         LazyColumn(Modifier.heightIn(max = 480.dp)) {
             items(profiles, key = { it.profile.id }) { item ->
                 val selected = item.profile.id == currentProfileId
-                val preferred = item.preferredModel
+                val hint = when {
+                    forChat -> item.preferredModel?.modelId ?: "No models switched on"
+                    selected && currentModelId != null -> currentModelId
+                    else -> item.profile.baseUrl.removePrefix("https://")
+                }
                 ListItem(
                     headlineContent = { Text(item.profile.name) },
                     supportingContent = {
                         Text(
-                            preferred?.modelId ?: "No models switched on",
+                            hint,
                             fontFamily = MonoFamily,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -178,13 +214,16 @@ private fun ProfileStep(
             }
         }
         Text(
-            "The model under each name is the one you used last.",
+            if (forChat) "The model under each name is the one you used last." else "Only OpenAI-compatible profiles have an audio API.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
         )
-        TextButton(onClick = onAddProfile, modifier = Modifier.padding(horizontal = 12.dp)) {
-            Text("Add profile")
+        Row(Modifier.padding(horizontal = 12.dp)) {
+            TextButton(onClick = onAddProfile) { Text("Add profile") }
+            if (onTurnOff != null && currentProfileId != null) {
+                TextButton(onClick = onTurnOff) { Text("Turn off") }
+            }
         }
     }
 }
@@ -192,6 +231,7 @@ private fun ProfileStep(
 @Composable
 private fun ModelStep(
     profile: ProfileWithModels,
+    purpose: ModelPurpose,
     currentModelId: String?,
     onBack: () -> Unit,
     onPick: (String) -> Unit,
@@ -199,11 +239,12 @@ private fun ModelStep(
 ) {
     Column(Modifier.padding(bottom = 16.dp)) {
         StepHeader("Step 2 of 2 · ${profile.profile.name}", "Choose a model", onBack)
-        val models = profile.enabledModels
+        val models = profile.modelsFor(purpose)
+        val forChat = purpose == ModelPurpose.CHAT
         val format = ApiFormat.fromId(profile.profile.format)
         if (models.isEmpty()) {
             Text(
-                "No models are switched on in this profile.",
+                if (forChat) "No models are switched on in this profile." else "This profile has no models. Add one in the profile.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
@@ -217,6 +258,7 @@ private fun ModelStep(
                         Text(model.modelId, fontFamily = MonoFamily, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     },
                     supportingContent = when {
+                        !forChat -> model.displayName?.takeIf { it != model.modelId }?.let { name -> { Text(name) } }
                         model.makesImages(format) -> ({ Text("Generates images") })
                         !model.supportsAttachments -> ({ Text("Text only") })
                         model.displayName != null && model.displayName != model.modelId -> ({ Text(model.displayName) })

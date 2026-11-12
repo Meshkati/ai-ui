@@ -306,6 +306,24 @@ fun MarkdownContent(
     }
 }
 
+/** A reply as words to read aloud: code, images and Markdown markers are left out. */
+fun speakableText(markdown: String): String =
+    MarkdownParser.parse(markdown)
+        .map { block -> plainInline(block.prose()) }
+        .filter { it.isNotBlank() }
+        .joinToString("\n\n")
+
+private val MarkdownLink = Regex("""!?\[([^\]]*)]\([^)]*\)""")
+private val InlineCode = Regex("`([^`]*)`")
+private val PairedMarkers = Regex("""\*\*|__|~~""")
+private val EmphasisMarker = Regex("""(?<!\w)[*_](?=\S)|(?<=\S)[*_](?!\w)""")
+
+private fun plainInline(text: String): String = text
+    .replace(MarkdownLink, "$1")
+    .replace(InlineCode, "$1")
+    .replace(PairedMarkers, "")
+    .replace(EmphasisMarker, "")
+
 /** The words a block's reading direction is judged by; code and media have none. */
 private fun MdBlock.prose(): String = when (this) {
     is MdBlock.Heading -> text

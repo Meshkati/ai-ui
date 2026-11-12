@@ -14,9 +14,12 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.File
 import java.util.Base64
 import java.util.concurrent.TimeUnit
 
@@ -102,6 +105,34 @@ class OpenAiCompatAdapter(private val http: OkHttpClient) : LlmClient {
         return images
     }
 
+    /** OpenAI audio transcriptions; [audio] is uploaded as one file. */
+    suspend fun transcribe(endpoint: Endpoint, model: String, audio: File): String {
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("model", model)
+            .addFormDataPart("response_format", "json")
+            .addFormDataPart("file", audio.name, audio.asRequestBody(audioMimeType(audio.name).toMediaType()))
+            .build()
+        val request = authorizedRequest(endpoint, joinUrl(endpoint.baseUrl, "/audio/transcriptions")).post(body).build()
+        val text = fetch(request) { LenientJson.parseToJsonElement(it.body.string()).jsonObject.str("text") }
+            ?: throw LlmException(ErrorKind.STREAM, "The server replied without a transcript.")
+        return text.trim()
+    }
+
+    /** OpenAI audio speech: the whole of [text] read aloud as one MP3. */
+    suspend fun synthesizeSpeech(endpoint: Endpoint, model: String, text: String): ByteArray {
+        val body = buildJsonObject {
+            put("model", model)
+            put("input", text)
+            put("voice", DEFAULT_VOICE)
+            put("response_format", "mp3")
+        }
+        val request = baseRequest(endpoint, joinUrl(endpoint.baseUrl, "/audio/speech"))
+            .post(body.toString().toRequestBody(JSON))
+            .build()
+        return fetch(request) { it.body.bytes() }
+    }
+
     /** Image URLs usually point at a storage host, so the API key is not sent with them. */
     private suspend fun downloadImage(endpoint: Endpoint, url: String): ByteArray {
         val request = Request.Builder().url(url).get()
@@ -111,7 +142,7 @@ class OpenAiCompatAdapter(private val http: OkHttpClient) : LlmClient {
 
     private suspend fun <T> fetch(request: Request, read: (okhttp3.Response) -> T): T {
         val response = try {
-            imageHttp.newCall(request).await()
+            slowHttp.newCall(request).await()
         } catch (e: Throwable) {
             throw mapThrowable(e)
         }
@@ -121,17 +152,23 @@ class OpenAiCompatAdapter(private val http: OkHttpClient) : LlmClient {
         }
     }
 
-    // Large images can take minutes, with nothing sent until the image is done.
-    private val imageHttp by lazy { http.newBuilder().readTimeout(5, TimeUnit.MINUTES).build() }
+    // Large images and long recordings can take minutes, with nothing sent until the result is done.
+    private val slowHttp by lazy { http.newBuilder().readTimeout(5, TimeUnit.MINUTES).build() }
 
-    private fun baseRequest(endpoint: Endpoint, url: String): Request.Builder {
-        val builder = Request.Builder().url(url).header("content-type", "application/json")
+    private fun baseRequest(endpoint: Endpoint, url: String): Request.Builder =
+        authorizedRequest(endpoint, url).header("content-type", "application/json")
+
+    private fun authorizedRequest(endpoint: Endpoint, url: String): Request.Builder {
+        val builder = Request.Builder().url(url)
         endpoint.apiKey?.takeIf { it.isNotBlank() }?.let { builder.header("Authorization", "Bearer $it") }
         return builder.applyEndpoint(endpoint)
     }
 
     companion object {
         private val JSON = "application/json".toMediaType()
+
+        /** OpenAI's voice names; most compatible servers map them to one of their own voices. */
+        const val DEFAULT_VOICE = "alloy"
 
         fun buildBody(request: LlmRequest, extraBody: JsonObject): JsonObject = buildJsonObject {
             put("model", request.model)
@@ -195,6 +232,24 @@ private val ImageModelMarkers = listOf(
 
 /** Guesses from the ID whether a model makes images through the Images API rather than chatting. */
 fun looksLikeImageModel(modelId: String): Boolean = modelId.lowercase().let { id -> ImageModelMarkers.any { it in id } }
+
+private fun audioMimeType(fileName: String): String = when (fileName.substringAfterLast('.').lowercase()) {
+    "m4a", "mp4" -> "audio/mp4"
+    "mp3" -> "audio/mpeg"
+    "wav" -> "audio/wav"
+    "ogg" -> "audio/ogg"
+    "webm" -> "audio/webm"
+    else -> "application/octet-stream"
+}
+
+private val TranscriptionModelMarkers = listOf("whisper", "transcribe", "stt", "asr", "parakeet")
+private val SpeechModelMarkers = listOf("tts", "speech", "kokoro", "piper", "orpheus")
+
+/** Guesses from the ID whether a model turns audio into text. */
+fun looksLikeTranscriptionModel(modelId: String): Boolean = modelId.lowercase().let { id -> TranscriptionModelMarkers.any { it in id } }
+
+/** Guesses from the ID whether a model turns text into speech. */
+fun looksLikeSpeechModel(modelId: String): Boolean = modelId.lowercase().let { id -> SpeechModelMarkers.any { it in id } }
 
 /** Reads the format from the file's first bytes; servers rarely say which one they sent. */
 fun imageMimeType(bytes: ByteArray): String {
