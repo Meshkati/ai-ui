@@ -51,7 +51,10 @@ import androidx.lifecycle.viewModelScope
 import dev.aiui.AppContainer
 import dev.aiui.BuildConfig
 import dev.aiui.data.AppPrefs
+import dev.aiui.data.ModelChoice
 import dev.aiui.data.ThemeMode
+import dev.aiui.data.audioProfileFor
+import dev.aiui.ui.components.ModelPurpose
 import dev.aiui.ui.components.LocalBadge
 import dev.aiui.ui.components.ProfileModelPickerSheet
 import dev.aiui.ui.components.clickableRow
@@ -71,6 +74,8 @@ class SettingsViewModel(container: AppContainer) : ViewModel() {
 
     fun setDefault(profileId: Long, modelId: String) = viewModelScope.launch { prefsRepo.setDefaultModel(profileId, modelId) }
     fun setTheme(theme: ThemeMode) = viewModelScope.launch { prefsRepo.setTheme(theme) }
+    fun setSpeechToText(choice: ModelChoice?) = viewModelScope.launch { prefsRepo.setSpeechToText(choice) }
+    fun setTextToSpeech(choice: ModelChoice?) = viewModelScope.launch { prefsRepo.setTextToSpeech(choice) }
     fun setDynamicColor(enabled: Boolean) = viewModelScope.launch { prefsRepo.setDynamicColor(enabled) }
     fun deleteAllChats() = viewModelScope.launch { chats.deleteAll() }
     suspend fun exportJson(): String = chats.exportJson()
@@ -90,6 +95,7 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     var showPicker by remember { mutableStateOf(false) }
+    var voicePicker by remember { mutableStateOf<ModelPurpose?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
 
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
@@ -112,6 +118,9 @@ fun SettingsScreen(
     } else {
         "Not set: new chats use the first profile"
     }
+
+    fun voiceLabel(choice: ModelChoice?): String =
+        profiles.audioProfileFor(choice)?.let { "${it.profile.name}, ${choice?.modelId}" } ?: "Off"
 
     Scaffold(
         topBar = {
@@ -155,6 +164,13 @@ fun SettingsScreen(
                     Row_("Default profile and model", defaultLabel, onClick = { showPicker = true })
                     Divider()
                     Row_("Personalization", "Your name and the system prompt for new chats", onClick = onOpenPersonalization)
+                }
+            }
+            item {
+                Section("Voice") {
+                    Row_("Speech to text", voiceLabel(prefs.speechToText), onClick = { voicePicker = ModelPurpose.SPEECH_TO_TEXT })
+                    Divider()
+                    Row_("Text to speech", voiceLabel(prefs.textToSpeech), onClick = { voicePicker = ModelPurpose.TEXT_TO_SPEECH })
                 }
             }
             item {
@@ -217,6 +233,21 @@ fun SettingsScreen(
             onAddProfile = { onOpenProfile(null) },
             onEditProfile = { onOpenProfile(it) },
             onDismiss = { showPicker = false },
+        )
+    }
+    voicePicker?.let { purpose ->
+        val current = if (purpose == ModelPurpose.SPEECH_TO_TEXT) prefs.speechToText else prefs.textToSpeech
+        val save: (ModelChoice?) -> Unit = if (purpose == ModelPurpose.SPEECH_TO_TEXT) vm::setSpeechToText else vm::setTextToSpeech
+        ProfileModelPickerSheet(
+            profiles = profiles,
+            currentProfileId = profiles.audioProfileFor(current)?.profile?.id,
+            currentModelId = current?.modelId,
+            onPick = { profileId, modelId -> save(ModelChoice(profileId, modelId)) },
+            onAddProfile = { onOpenProfile(null) },
+            onEditProfile = { onOpenProfile(it) },
+            onDismiss = { voicePicker = null },
+            purpose = purpose,
+            onTurnOff = { save(null) },
         )
     }
     if (confirmDelete) {

@@ -12,6 +12,7 @@ import dev.aiui.data.AppPrefs
 import dev.aiui.data.PendingAttachment
 import dev.aiui.data.ProfileWithModels
 import dev.aiui.data.UnsupportedAttachmentException
+import dev.aiui.data.audioProfileFor
 import dev.aiui.data.db.AttachmentEntity
 import dev.aiui.data.db.ConversationEntity
 import dev.aiui.data.db.MessageRole
@@ -19,7 +20,11 @@ import dev.aiui.data.db.ModelEntity
 import dev.aiui.data.db.MessageWithAttachments
 import dev.aiui.data.makesImages
 import dev.aiui.llm.ApiFormat
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,6 +37,7 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 
 /** The profile and model the next message goes to. */
@@ -58,6 +64,8 @@ data class UiMessage(
     val isLast: Boolean,
 )
 
+enum class VoiceInput { IDLE, RECORDING, TRANSCRIBING }
+
 data class ChatUiState(
     val conversationId: Long? = null,
     val title: String = "",
@@ -69,6 +77,10 @@ data class ChatUiState(
     val generatingIds: Set<Long> = emptySet(),
     val prefs: AppPrefs = AppPrefs(),
     val loaded: Boolean = false,
+    /** Speech to text is set up on a profile that still exists. */
+    val canDictate: Boolean = false,
+    /** Text to speech is set up on a profile that still exists. */
+    val canReadAloud: Boolean = false,
 )
 
 @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
@@ -76,6 +88,9 @@ class ChatViewModel(container: AppContainer) : ViewModel() {
     private val chats = container.chats
     private val profileRepo = container.profiles
     private val attachmentStore = container.attachments
+    private val speech = container.speech
+    private val recorder = container.voiceRecorder
+    private val player = container.speechPlayer
 
     private val conversationId = MutableStateFlow<Long?>(null)
     private val pendingSelection = MutableStateFlow<Pair<Long, String>?>(null)
@@ -87,6 +102,14 @@ class ChatViewModel(container: AppContainer) : ViewModel() {
         private set
     var importing by mutableStateOf(false)
         private set
+    var voiceInput by mutableStateOf(VoiceInput.IDLE)
+        private set
+    private var transcription: Job? = null
+
+    /** The reply being read aloud, if any. */
+    var speakingMessageId by mutableStateOf<Long?>(null)
+        private set
+    private var reading: Job? = null
 
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 4)
 
@@ -131,17 +154,21 @@ class ChatViewModel(container: AppContainer) : ViewModel() {
             generatingIds = generating,
             prefs = prefs,
             loaded = true,
+            canDictate = profiles.audioProfileFor(prefs.speechToText) != null,
+            canReadAloud = profiles.audioProfileFor(prefs.textToSpeech) != null,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState())
 
     fun openConversation(id: Long) {
         if (conversationId.value == id) return
         clearComposer()
+        stopReading()
         conversationId.value = id
     }
 
     fun newChat() {
         clearComposer()
+        stopReading()
         conversationId.value = null
         pendingSelection.value = null
     }
@@ -227,6 +254,79 @@ class ChatViewModel(container: AppContainer) : ViewModel() {
         attachmentStore.delete(attachment.localPath)
     }
 
+    fun startRecording() {
+        stopReading()
+        try {
+            recorder.start()
+            voiceInput = VoiceInput.RECORDING
+        } catch (e: Exception) {
+            recorder.stopAndDiscard()
+            notify("Couldn't start recording: ${e.message ?: e.javaClass.simpleName}")
+        }
+    }
+
+    /** Stops recording and adds what was said to the composer. */
+    fun finishRecording() {
+        val audio = recorder.stop()
+        if (audio == null) {
+            voiceInput = VoiceInput.IDLE
+            notify("Nothing was recorded.")
+            return
+        }
+        voiceInput = VoiceInput.TRANSCRIBING
+        transcription = viewModelScope.launch {
+            try {
+                val text = speech.transcribe(audio)
+                if (text.isBlank()) notify("No speech was heard.") else composerText = appendDictation(composerText, text)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                notify(e.message ?: "Couldn't transcribe the recording.")
+            } finally {
+                audio.delete()
+                voiceInput = VoiceInput.IDLE
+            }
+        }
+    }
+
+    /** Starts reading [message] aloud, or stops if it is already being read. */
+    fun toggleReadAloud(message: UiMessage) {
+        if (speakingMessageId == message.id) {
+            stopReading()
+            return
+        }
+        val text = speakableText(message.text)
+        if (text.isBlank()) {
+            notify("This reply has nothing to read aloud.")
+            return
+        }
+        val previous = reading
+        speakingMessageId = message.id
+        // Started after it is stored, so the cleanup below can tell whether a newer reading replaced it.
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            // The previous reading lets go of audio focus before this one takes it.
+            previous?.cancelAndJoin()
+            player.acquireFocus()
+            try {
+                speech.speak(text).collect { player.play(it) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                notify(e.message ?: "Couldn't read the reply aloud.")
+            } finally {
+                player.releaseFocus()
+                if (reading === coroutineContext.job) speakingMessageId = null
+            }
+        }
+        reading = job
+        job.start()
+    }
+
+    fun stopReading() {
+        reading?.cancel()
+        speakingMessageId = null
+    }
+
     fun rename(id: Long, title: String) {
         viewModelScope.launch { chats.rename(id, title) }
     }
@@ -241,13 +341,21 @@ class ChatViewModel(container: AppContainer) : ViewModel() {
     }
 
     private fun clearComposer() {
+        cancelVoiceInput()
         pending.forEach { attachmentStore.delete(it.localPath) }
         pending.clear()
         composerText = ""
         editingMessageId = null
     }
 
+    private fun cancelVoiceInput() {
+        recorder.stopAndDiscard()
+        transcription?.cancel()
+        voiceInput = VoiceInput.IDLE
+    }
+
     override fun onCleared() {
+        recorder.stopAndDiscard()
         pending.forEach { attachmentStore.delete(it.localPath) }
     }
 
@@ -268,6 +376,10 @@ class ChatViewModel(container: AppContainer) : ViewModel() {
         }
 
     companion object {
+        /** Dictated words go after whatever is already typed. */
+        fun appendDictation(typed: String, dictated: String): String =
+            if (typed.isBlank()) dictated else typed.trimEnd() + " " + dictated
+
         fun resolveSelection(
             conversation: ConversationEntity?,
             profiles: List<ProfileWithModels>,

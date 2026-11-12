@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Edit
@@ -21,6 +22,7 @@ import androidx.compose.material.icons.outlined.PictureAsPdf
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.SaveAlt
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.StopCircle
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -56,11 +58,15 @@ class MessageActions(
     val regenerate: (Long) -> Unit,
     val edit: (UiMessage) -> Unit,
     val openAttachment: (AttachmentEntity) -> Unit,
+    val readAloud: (UiMessage) -> Unit,
 )
 
+/** Whether replies can be read aloud, and which one is being read now. */
+data class ReadAloudState(val available: Boolean, val speakingMessageId: Long?)
+
 @Composable
-fun MessageItem(message: UiMessage, conversationBusy: Boolean, actions: MessageActions) {
-    if (message.isUser) UserMessage(message, conversationBusy, actions) else AssistantMessage(message, conversationBusy, actions)
+fun MessageItem(message: UiMessage, conversationBusy: Boolean, readAloud: ReadAloudState, actions: MessageActions) {
+    if (message.isUser) UserMessage(message, conversationBusy, actions) else AssistantMessage(message, conversationBusy, readAloud, actions)
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -167,7 +173,7 @@ fun FileChip(name: String, detail: String, isPdf: Boolean, modifier: Modifier = 
 }
 
 @Composable
-private fun AssistantMessage(message: UiMessage, busy: Boolean, actions: MessageActions) {
+private fun AssistantMessage(message: UiMessage, busy: Boolean, readAloud: ReadAloudState, actions: MessageActions) {
     val streaming = message.status == MessageStatus.STREAMING
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (message.text.isBlank() && streaming) {
@@ -232,6 +238,17 @@ private fun AssistantMessage(message: UiMessage, busy: Boolean, actions: Message
                 if (message.isLast && message.status != MessageStatus.ERROR) {
                     IconButton(onClick = { actions.regenerate(message.id) }, enabled = !busy) {
                         Icon(Icons.Outlined.Refresh, contentDescription = "Regenerate reply", tint = tint, modifier = Modifier.size(20.dp))
+                    }
+                }
+                val speaking = readAloud.speakingMessageId == message.id
+                if (message.text.isNotBlank() && (readAloud.available || speaking)) {
+                    IconButton(onClick = { actions.readAloud(message) }) {
+                        Icon(
+                            if (speaking) Icons.Outlined.StopCircle else Icons.AutoMirrored.Outlined.VolumeUp,
+                            contentDescription = if (speaking) "Stop reading aloud" else "Read aloud",
+                            tint = tint,
+                            modifier = Modifier.size(20.dp),
+                        )
                     }
                 }
                 if (message.text.isNotBlank()) {

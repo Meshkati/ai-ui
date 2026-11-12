@@ -5,11 +5,14 @@ import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import dev.aiui.audio.SpeechPlayer
+import dev.aiui.audio.VoiceRecorder
 import dev.aiui.data.AttachmentStore
 import dev.aiui.data.ChatRepository
 import dev.aiui.data.KeyVault
 import dev.aiui.data.PrefsRepository
 import dev.aiui.data.ProfileRepository
+import dev.aiui.data.SpeechRepository
 import dev.aiui.data.db.AppDatabase
 import dev.aiui.llm.AnthropicAdapter
 import dev.aiui.llm.ApiFormat
@@ -34,6 +37,9 @@ class AppContainer(app: Application) {
     )
     val profiles = ProfileRepository(db, KeyVault(), clients)
     val chats = ChatRepository(db, profiles, prefs, attachments, clients, openAi, appScope)
+    val speech = SpeechRepository(profiles, prefs, openAi)
+    val voiceRecorder = VoiceRecorder(app)
+    val speechPlayer = SpeechPlayer(app)
 }
 
 class AiUiApp : Application(), SingletonImageLoader.Factory {

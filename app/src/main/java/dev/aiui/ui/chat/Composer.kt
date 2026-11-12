@@ -18,14 +18,17 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
@@ -64,6 +67,9 @@ fun Composer(
     editing: Boolean,
     generating: Boolean,
     enabled: Boolean,
+    canDictate: Boolean,
+    voiceInput: VoiceInput,
+    onMic: () -> Unit,
     onCancelEdit: () -> Unit,
     onAttach: () -> Unit,
     onRemove: (PendingAttachment) -> Unit,
@@ -128,9 +134,17 @@ fun Composer(
                     Icon(Icons.Outlined.Add, contentDescription = "Attach a file or image")
                 }
                 Spacer(Modifier.weight(1f))
-                if (importing) {
+                if (importing || voiceInput == VoiceInput.TRANSCRIBING) {
                     CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(20.dp).padding(end = 4.dp))
                     Spacer(Modifier.size(12.dp))
+                }
+                when {
+                    voiceInput == VoiceInput.RECORDING -> FilledTonalIconButton(onClick = onMic) {
+                        Icon(Icons.Filled.Mic, contentDescription = "Stop recording and transcribe")
+                    }
+                    canDictate -> IconButton(onClick = onMic, enabled = voiceInput == VoiceInput.IDLE) {
+                        Icon(Icons.Outlined.Mic, contentDescription = "Dictate a message")
+                    }
                 }
                 if (generating) {
                     FilledIconButton(onClick = onStop) {
@@ -139,7 +153,7 @@ fun Composer(
                 } else {
                     FilledIconButton(
                         onClick = onSend,
-                        enabled = enabled && !importing && (text.isNotBlank() || pending.isNotEmpty()),
+                        enabled = enabled && !importing && voiceInput == VoiceInput.IDLE && (text.isNotBlank() || pending.isNotEmpty()),
                     ) {
                         Icon(
                             if (editing) Icons.AutoMirrored.Filled.ArrowForward else Icons.Filled.ArrowUpward,

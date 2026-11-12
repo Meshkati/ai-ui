@@ -13,6 +13,9 @@ import kotlinx.coroutines.flow.map
 
 enum class ThemeMode { SYSTEM, LIGHT, DARK }
 
+/** A model on one of the saved profiles. */
+data class ModelChoice(val profileId: Long, val modelId: String)
+
 data class AppPrefs(
     val displayName: String = "",
     val systemPrompt: String = "",
@@ -20,6 +23,10 @@ data class AppPrefs(
     val defaultModelId: String? = null,
     val theme: ThemeMode = ThemeMode.SYSTEM,
     val dynamicColor: Boolean = true,
+    /** Turns what the user says into composer text. Null when voice input is off. */
+    val speechToText: ModelChoice? = null,
+    /** Reads replies aloud. Null when read aloud is off. */
+    val textToSpeech: ModelChoice? = null,
 )
 
 private val Context.dataStore by preferencesDataStore(name = "prefs")
@@ -52,6 +59,28 @@ class PrefsRepository(private val context: Context) {
         context.dataStore.edit { it[DYNAMIC_COLOR] = enabled }
     }
 
+    suspend fun setSpeechToText(choice: ModelChoice?) = setChoice(STT_PROFILE, STT_MODEL, choice)
+
+    suspend fun setTextToSpeech(choice: ModelChoice?) = setChoice(TTS_PROFILE, TTS_MODEL, choice)
+
+    private suspend fun setChoice(profileKey: Preferences.Key<Long>, modelKey: Preferences.Key<String>, choice: ModelChoice?) {
+        context.dataStore.edit {
+            if (choice == null) {
+                it.remove(profileKey)
+                it.remove(modelKey)
+            } else {
+                it[profileKey] = choice.profileId
+                it[modelKey] = choice.modelId
+            }
+        }
+    }
+
+    private fun Preferences.choice(profileKey: Preferences.Key<Long>, modelKey: Preferences.Key<String>): ModelChoice? {
+        val profileId = this[profileKey] ?: return null
+        val modelId = this[modelKey] ?: return null
+        return ModelChoice(profileId, modelId)
+    }
+
     private fun Preferences.toAppPrefs() = AppPrefs(
         displayName = this[DISPLAY_NAME].orEmpty(),
         systemPrompt = this[SYSTEM_PROMPT].orEmpty(),
@@ -59,6 +88,8 @@ class PrefsRepository(private val context: Context) {
         defaultModelId = this[DEFAULT_MODEL],
         theme = this[THEME]?.let { name -> ThemeMode.entries.firstOrNull { it.name == name } } ?: ThemeMode.SYSTEM,
         dynamicColor = this[DYNAMIC_COLOR] ?: true,
+        speechToText = choice(STT_PROFILE, STT_MODEL),
+        textToSpeech = choice(TTS_PROFILE, TTS_MODEL),
     )
 
     private companion object {
@@ -68,5 +99,9 @@ class PrefsRepository(private val context: Context) {
         val DEFAULT_MODEL = stringPreferencesKey("default_model")
         val THEME = stringPreferencesKey("theme")
         val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
+        val STT_PROFILE = longPreferencesKey("stt_profile")
+        val STT_MODEL = stringPreferencesKey("stt_model")
+        val TTS_PROFILE = longPreferencesKey("tts_profile")
+        val TTS_MODEL = stringPreferencesKey("tts_model")
     }
 }
