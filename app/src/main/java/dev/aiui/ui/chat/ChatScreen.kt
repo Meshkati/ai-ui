@@ -1,10 +1,12 @@
 package dev.aiui.ui.chat
 
+import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -144,10 +146,22 @@ fun ChatScreen(
     }
     val openPhotos = { photoLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
     val openFiles = { fileLauncher.launch(arrayOf("*/*")) }
-    val openCamera = {
+    val takePhoto = {
         val uri = newCameraUri(context)
         cameraUri = uri
         cameraLauncher.launch(uri)
+    }
+    // The app declares the camera permission for QR scanning, so the system camera
+    // refuses to open for it until that permission is granted.
+    val cameraPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) takePhoto() else vm.notify("Allow camera access in Settings to take photos.")
+    }
+    val openCamera = {
+        if (context.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            takePhoto()
+        } else {
+            cameraPermission.launch(Manifest.permission.CAMERA)
+        }
     }
 
     val actions = remember(vm) {
