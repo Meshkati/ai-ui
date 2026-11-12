@@ -8,6 +8,7 @@ import dev.aiui.llm.Endpoint
 import dev.aiui.llm.LenientJson
 import dev.aiui.llm.LlmClient
 import dev.aiui.llm.RemoteModel
+import dev.aiui.llm.looksLikeImageModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -16,6 +17,10 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
+
+/** Only OpenAI-compatible servers have an Images API to send to. */
+fun ModelEntity.makesImages(format: ApiFormat): Boolean =
+    format == ApiFormat.OPENAI && (generatesImages ?: looksLikeImageModel(modelId))
 
 data class ProfileWithModels(
     val profile: ProfileEntity,

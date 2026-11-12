@@ -15,7 +15,10 @@ import dev.aiui.data.UnsupportedAttachmentException
 import dev.aiui.data.db.AttachmentEntity
 import dev.aiui.data.db.ConversationEntity
 import dev.aiui.data.db.MessageRole
+import dev.aiui.data.db.ModelEntity
 import dev.aiui.data.db.MessageWithAttachments
+import dev.aiui.data.makesImages
+import dev.aiui.llm.ApiFormat
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -37,6 +40,8 @@ data class Selection(
     val profileName: String,
     val modelId: String,
     val supportsAttachments: Boolean,
+    /** Messages go to the Images API, and the reply is a picture. */
+    val generatesImages: Boolean = false,
     /** False when the chat's profile or model no longer exists. */
     val available: Boolean = true,
 )
@@ -277,6 +282,7 @@ class ChatViewModel(container: AppContainer) : ViewModel() {
                     profileName = profile?.profile?.name ?: "Deleted profile",
                     modelId = conversation.modelId,
                     supportsAttachments = model?.supportsAttachments ?: true,
+                    generatesImages = profile != null && model != null && model.makesImages(ApiFormat.fromId(profile.profile.format)),
                     available = profile != null,
                 )
             }
@@ -284,11 +290,18 @@ class ChatViewModel(container: AppContainer) : ViewModel() {
             for ((profileId, modelId) in candidates) {
                 val profile = profiles.firstOrNull { it.profile.id == profileId } ?: continue
                 val model = profile.enabledModels.firstOrNull { it.modelId == modelId } ?: continue
-                return Selection(profileId, profile.profile.name, model.modelId, model.supportsAttachments)
+                return selectionOf(profile, model)
             }
             val fallback = profiles.firstOrNull { it.preferredModel != null } ?: return null
-            val model = fallback.preferredModel ?: return null
-            return Selection(fallback.profile.id, fallback.profile.name, model.modelId, model.supportsAttachments)
+            return selectionOf(fallback, fallback.preferredModel ?: return null)
         }
+
+        private fun selectionOf(profile: ProfileWithModels, model: ModelEntity) = Selection(
+            profileId = profile.profile.id,
+            profileName = profile.profile.name,
+            modelId = model.modelId,
+            supportsAttachments = model.supportsAttachments,
+            generatesImages = model.makesImages(ApiFormat.fromId(profile.profile.format)),
+        )
     }
 }

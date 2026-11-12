@@ -45,6 +45,8 @@ data class ModelEntity(
     val maxOutputTokens: Int? = null,
     val position: Int = 0,
     val manual: Boolean = false,
+    /** Null until the user sets it; the model ID decides until then. */
+    val generatesImages: Boolean? = null,
 )
 
 @Entity(tableName = "conversation")

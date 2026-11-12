@@ -27,12 +27,13 @@ class AppContainer(app: Application) {
     val db = AppDatabase.create(app)
     val prefs = PrefsRepository(app)
     val attachments = AttachmentStore(app)
+    private val openAi = OpenAiCompatAdapter(http)
     private val clients = mapOf(
         ApiFormat.ANTHROPIC to AnthropicAdapter(http),
-        ApiFormat.OPENAI to OpenAiCompatAdapter(http),
+        ApiFormat.OPENAI to openAi,
     )
     val profiles = ProfileRepository(db, KeyVault(), clients)
-    val chats = ChatRepository(db, profiles, prefs, attachments, clients, appScope)
+    val chats = ChatRepository(db, profiles, prefs, attachments, clients, openAi, appScope)
 }
 
 class AiUiApp : Application(), SingletonImageLoader.Factory {

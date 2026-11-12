@@ -58,6 +58,7 @@ import java.io.File
 fun Composer(
     text: String,
     onTextChange: (String) -> Unit,
+    placeholder: String,
     pending: List<PendingAttachment>,
     importing: Boolean,
     editing: Boolean,
@@ -108,7 +109,7 @@ fun Composer(
             TextField(
                 value = text,
                 onValueChange = onTextChange,
-                placeholder = { Text("Message") },
+                placeholder = { Text(placeholder) },
                 textStyle = LocalTextStyle.current.copy(textDirection = textDirectionOf(text)),
                 maxLines = 8,
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),

@@ -70,6 +70,7 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.aiui.data.db.ModelEntity
+import dev.aiui.data.makesImages
 import dev.aiui.llm.ApiFormat
 import dev.aiui.ui.components.QrScanDialog
 import dev.aiui.ui.components.clickableRow
@@ -222,6 +223,7 @@ fun ProfileEditScreen(vm: ProfileEditViewModel, onDone: () -> Unit) {
 
             ModelsSection(
                 models = form.models,
+                format = form.format,
                 filter = modelFilter,
                 onFilter = { modelFilter = it },
                 onToggle = vm::setModelEnabled,
@@ -312,6 +314,7 @@ fun ProfileEditScreen(vm: ProfileEditViewModel, onDone: () -> Unit) {
     editingModel?.let { model ->
         ModelSettingsDialog(
             model = model,
+            format = form.format,
             onSave = { updated ->
                 vm.updateModel(model.modelId) { updated }
                 editingModel = null
@@ -392,6 +395,7 @@ private fun ScanButton(target: ScanTarget, onClick: () -> Unit) {
 @Composable
 private fun ModelsSection(
     models: List<ModelEntity>,
+    format: ApiFormat,
     filter: String,
     onFilter: (String) -> Unit,
     onToggle: (String, Boolean) -> Unit,
@@ -433,7 +437,7 @@ private fun ModelsSection(
             .forEach { model ->
                 ListItem(
                     headlineContent = { Text(model.modelId, fontFamily = MonoFamily, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    supportingContent = modelDetails(model)?.let { text -> { Text(text) } },
+                    supportingContent = modelDetails(model, format)?.let { text -> { Text(text) } },
                     trailingContent = { Switch(checked = model.enabled, onCheckedChange = { onToggle(model.modelId, it) }) },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                     modifier = Modifier.clickableRow { onEdit(model) },
@@ -446,8 +450,9 @@ private fun ModelsSection(
     }
 }
 
-private fun modelDetails(model: ModelEntity): String? = listOfNotNull(
+private fun modelDetails(model: ModelEntity, format: ApiFormat): String? = listOfNotNull(
     model.displayName?.takeIf { it != model.modelId },
+    "Generates images".takeIf { model.makesImages(format) },
     "Text only".takeIf { !model.supportsAttachments },
     model.maxOutputTokens?.let { "Up to $it output tokens" },
     "Added by hand".takeIf { model.manual },
@@ -456,12 +461,14 @@ private fun modelDetails(model: ModelEntity): String? = listOfNotNull(
 @Composable
 private fun ModelSettingsDialog(
     model: ModelEntity,
+    format: ApiFormat,
     onSave: (ModelEntity) -> Unit,
     onRemove: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     var maxTokens by remember { mutableStateOf(model.maxOutputTokens?.toString().orEmpty()) }
     var attachments by remember { mutableStateOf(model.supportsAttachments) }
+    var images by remember { mutableStateOf(model.makesImages(format)) }
     val parsedTokens = maxTokens.trim().toIntOrNull()
     val tokensValid = maxTokens.isBlank() || (parsedTokens != null && parsedTokens > 0)
     AlertDialog(
@@ -483,11 +490,26 @@ private fun ModelSettingsDialog(
                     Text("Accepts images and files", modifier = Modifier.weight(1f))
                     Switch(checked = attachments, onCheckedChange = { attachments = it })
                 }
+                if (format == ApiFormat.OPENAI) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Generates images", modifier = Modifier.weight(1f))
+                        Switch(checked = images, onCheckedChange = { images = it })
+                    }
+                }
             }
         },
         confirmButton = {
             TextButton(
-                onClick = { onSave(model.copy(maxOutputTokens = parsedTokens, supportsAttachments = attachments)) },
+                onClick = {
+                    val imagesChanged = images != model.makesImages(format)
+                    onSave(
+                        model.copy(
+                            maxOutputTokens = parsedTokens,
+                            supportsAttachments = attachments,
+                            generatesImages = if (imagesChanged) images else model.generatesImages,
+                        ),
+                    )
+                },
                 enabled = tokensValid,
             ) { Text("Done") }
         },

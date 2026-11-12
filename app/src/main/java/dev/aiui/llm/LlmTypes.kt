@@ -82,6 +82,8 @@ class LlmException(
         }
 }
 
+class GeneratedImage(val mimeType: String, val bytes: ByteArray)
+
 data class RemoteModel(
     val id: String,
     val displayName: String?,

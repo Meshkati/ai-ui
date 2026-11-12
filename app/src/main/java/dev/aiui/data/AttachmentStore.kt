@@ -12,7 +12,9 @@ import android.os.ParcelFileDescriptor
 import android.os.ext.SdkExtensions
 import android.provider.OpenableColumns
 import android.util.Base64
+import dev.aiui.data.db.AttachmentEntity
 import dev.aiui.data.db.AttachmentKind
+import dev.aiui.llm.GeneratedImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -28,7 +30,16 @@ data class PendingAttachment(
     val fileName: String,
     val localPath: String,
     val sizeBytes: Long,
-)
+) {
+    fun toEntity(messageId: Long) = AttachmentEntity(
+        messageId = messageId,
+        kind = kind,
+        mimeType = mimeType,
+        fileName = fileName,
+        localPath = localPath,
+        sizeBytes = sizeBytes,
+    )
+}
 
 class UnsupportedAttachmentException(message: String) : Exception(message)
 
@@ -63,6 +74,14 @@ class AttachmentStore(private val context: Context) {
                 "$name can't be attached ($mime). Attach images, PDFs, or text and code files.",
             )
         }
+    }
+
+    /** Stores an image a model made, to be shown with its reply. */
+    suspend fun saveGenerated(image: GeneratedImage): PendingAttachment = withContext(Dispatchers.IO) {
+        val extension = image.mimeType.substringAfter('/').replace("jpeg", "jpg")
+        val file = newFile(extension)
+        file.writeBytes(image.bytes)
+        PendingAttachment(AttachmentKind.IMAGE, image.mimeType, "Generated image.$extension", file.absolutePath, file.length())
     }
 
     fun delete(path: String) {

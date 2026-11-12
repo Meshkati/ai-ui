@@ -17,6 +17,8 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.util.Base64
+import java.util.concurrent.TimeUnit
 
 /** OpenAI Chat Completions, the format OpenAI, Nebius, Ollama, LM Studio, llama.cpp and vLLM all speak. */
 class OpenAiCompatAdapter(private val http: OkHttpClient) : LlmClient {
@@ -77,6 +79,50 @@ class OpenAiCompatAdapter(private val http: OkHttpClient) : LlmClient {
             }.sortedBy { model -> model.id }
         }
     }
+
+    /** OpenAI Images API. Not retried: a request that timed out may still have been generated and billed. */
+    suspend fun generateImages(endpoint: Endpoint, model: String, prompt: String): List<GeneratedImage> {
+        val body = buildJsonObject {
+            put("model", model)
+            put("prompt", prompt)
+            put("n", 1)
+        }
+        val request = baseRequest(endpoint, joinUrl(endpoint.baseUrl, "/images/generations"))
+            .post(body.toString().toRequestBody(JSON))
+            .build()
+        val data = fetch(request) { LenientJson.parseToJsonElement(it.body.string()).jsonObject["data"].orEmptyArray() }
+        val images = data.mapNotNull { element ->
+            val item = element as? JsonObject ?: return@mapNotNull null
+            val bytes = item.str("b64_json")?.let { Base64.getDecoder().decode(it) }
+                ?: item.str("url")?.let { downloadImage(endpoint, it) }
+                ?: return@mapNotNull null
+            GeneratedImage(imageMimeType(bytes), bytes)
+        }
+        if (images.isEmpty()) throw LlmException(ErrorKind.STREAM, "The server replied without an image.")
+        return images
+    }
+
+    /** Image URLs usually point at a storage host, so the API key is not sent with them. */
+    private suspend fun downloadImage(endpoint: Endpoint, url: String): ByteArray {
+        val request = Request.Builder().url(url).get()
+        if (endpoint.allowInsecure) request.tag(InsecureAllowed::class.java, InsecureAllowed)
+        return fetch(request.build()) { it.body.bytes() }
+    }
+
+    private suspend fun <T> fetch(request: Request, read: (okhttp3.Response) -> T): T {
+        val response = try {
+            imageHttp.newCall(request).await()
+        } catch (e: Throwable) {
+            throw mapThrowable(e)
+        }
+        response.use {
+            if (!it.isSuccessful) throw httpError(it)
+            return read(it)
+        }
+    }
+
+    // Large images can take minutes, with nothing sent until the image is done.
+    private val imageHttp by lazy { http.newBuilder().readTimeout(5, TimeUnit.MINUTES).build() }
 
     private fun baseRequest(endpoint: Endpoint, url: String): Request.Builder {
         val builder = Request.Builder().url(url).header("content-type", "application/json")
@@ -141,3 +187,22 @@ class OpenAiCompatAdapter(private val http: OkHttpClient) : LlmClient {
 /** True when the base URL is OpenAI's own API, the only Chat Completions server known to accept PDF file parts. */
 fun isOpenAiHost(baseUrl: String): Boolean =
     runCatching { java.net.URI(baseUrl.trim()).host?.lowercase() == "api.openai.com" }.getOrDefault(false)
+
+private val ImageModelMarkers = listOf(
+    "dall-e", "gpt-image", "imagen", "flux", "stable-diffusion", "sdxl", "sd3", "stable-image",
+    "recraft", "ideogram", "seedream", "hidream", "qwen-image",
+)
+
+/** Guesses from the ID whether a model makes images through the Images API rather than chatting. */
+fun looksLikeImageModel(modelId: String): Boolean = modelId.lowercase().let { id -> ImageModelMarkers.any { it in id } }
+
+/** Reads the format from the file's first bytes; servers rarely say which one they sent. */
+fun imageMimeType(bytes: ByteArray): String {
+    fun startsWith(vararg prefix: Int) = bytes.size >= prefix.size && prefix.indices.all { bytes[it] == prefix[it].toByte() }
+    return when {
+        startsWith(0xFF, 0xD8, 0xFF) -> "image/jpeg"
+        startsWith(0x52, 0x49, 0x46, 0x46) && bytes.size >= 12 && String(bytes, 8, 4, Charsets.US_ASCII) == "WEBP" -> "image/webp"
+        startsWith(0x47, 0x49, 0x46) -> "image/gif"
+        else -> "image/png"
+    }
+}
